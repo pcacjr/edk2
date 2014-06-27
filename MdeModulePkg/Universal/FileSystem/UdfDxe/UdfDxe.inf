@@ -32,6 +32,7 @@
 
 [Sources]
   ComponentName.c
+  FileSystemOps.c
   Udf.c
   Udf.h
 
