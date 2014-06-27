@@ -112,8 +112,31 @@ UdfDriverBindingStart (
   IN EFI_DEVICE_PATH_PROTOCOL     *RemainingDevicePath
   )
 {
-  EFI_STATUS                      Status;
-  EFI_DISK_IO_PROTOCOL            *DiskIo;
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINT32                                 BlockSize;
+  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
+  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
+  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
+  UDF_FILE_ENTRY                         *RootFileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *RootFileIdentifierDesc;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  Status = gBS->OpenProtocol (
+                  ControllerHandle,
+                  &gEfiBlockIoProtocolGuid,
+                  (VOID **) &BlockIo,
+                  This->DriverBindingHandle,
+                  ControllerHandle,
+                  EFI_OPEN_PROTOCOL_GET_PROTOCOL
+                  );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
 
   Status = gBS->OpenProtocol (
                   ControllerHandle,
@@ -133,21 +156,49 @@ UdfDriverBindingStart (
     goto Exit;
   }
 
-  Status = gBS->OpenProtocol (
-                  ControllerHandle,
-                  &gEfiBlockIoProtocolGuid,
-                  NULL,
-                  This->DriverBindingHandle,
-                  ControllerHandle,
-                  EFI_OPEN_PROTOCOL_TEST_PROTOCOL
-                  );
-  if (EFI_ERROR (Status)) {
+#if 0
+  Print (
+    L"UdfDriverStart: Number of LBAs:   %d (0x%08x)\n",
+    BlockIo->Media->LastBlock + 1,
+    BlockIo->Media->LastBlock + 1
+    );
+#endif
+
+  if ((BlockIo->Media->LogicalPartition == TRUE) ||
+      (BlockIo->Media->LastBlock + 1 != 0x5ED4D0)) {
+    Status = EFI_UNSUPPORTED;
     goto Exit;
   }
 
-  Print (L"UdfDriverStart: started (%r)\n", EFI_SUCCESS);
+  //
+  // Logical block size for DVD ready-only disc
+  //
+  BlockSize = 2048;
+
+  Print (L"UdfDriverStart: Defaulting to logical block size of 2048\n");
+
+  Status = FindRootDirectory (
+                          BlockIo,
+                          DiskIo,
+			  BlockSize,
+			  &AnchorPoint,
+			  &PartitionDesc,
+			  &LogicalVolDesc,
+			  &FileSetDesc,
+			  &RootFileEntry,
+			  &RootFileIdentifierDesc
+                          );
+  if (EFI_ERROR (Status)) {
+    Print (L"UdfDriverStart: Failed to find Root Directory (%r)\n", Status);
+    goto Exit;
+  }
+
+  Print (L"UdfDriverStart: Root Directory found\n");
+
+  Print (L"UdfDriverStart: Done (%r)\n", EFI_SUCCESS);
 
 Exit:
+  gBS->RestoreTPL (OldTpl);
   return Status;
 }
 
@@ -184,7 +235,7 @@ UdfDriverBindingStop (
         ControllerHandle
         );
 
-  Print (L"UdfDriverStop: stopped (%r)\n", EFI_SUCCESS);
+  Print (L"UdfDriverStop: Stopped (%r)\n", EFI_SUCCESS);
 
   return EFI_SUCCESS;
 }

@@ -34,6 +34,369 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 // UDF filesystem driver's private data
 //
 
+#define FIRST_ANCHOR_POINT_LSN                ((UINT32)0x0000000000000100UL)
+
+#define IS_ANCHOR_VOLUME_DESCRIPTOR_POINTER(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 2)
+#define IS_PARTITION_DESCRIPTOR(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 5)
+#define IS_LOGICAL_VOLUME_DESCRIPTOR(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 6)
+#define IS_FILE_SET_DESCRIPTOR(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 256)
+#define IS_FILE_ENTRY(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 261)
+#define IS_FILE_IDENTIFIER_DESCRIPTOR(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 257)
+
+#define IS_FILE_ENTRY_DIRECTORY(_Pointer) \
+  (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
+#define IS_FILE_ENTRY_STANDARD_FILE(_Pointer) \
+  (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 5)
+
+#pragma pack(1)
+
+//
+// UDF's Volume Structures
+//
+typedef struct {
+  UINT16                TagIdentifier;
+  UINT16                DescriptorVersion;
+  UINT8                 TagChecksum;
+  UINT8                 Reserved;
+  UINT16                TagSerialNumber; // Ignored. Intended for disaster recovery.
+  UINT16                DescriptorCRC;
+  UINT16                DescriptorCRCLength;
+  UINT32                TagLocation;
+} UDF_DESCRIPTOR_TAG;
+
+//
+// ECMA 167 1/7.2.1
+//
+typedef struct {
+  UINT8            CharacterSetType;
+  UINT8            CharacterSetInfo[63];
+} UDF_CHAR_SPEC;
+
+//
+// ECMA 167 1/7.4
+//
+typedef struct {
+  UINT8            Flags;
+  UINT8            Identifier[23];
+  UINT8            IdentifierSuffix[8];
+} UDF_ENTITY_ID;
+
+//
+// ECMA 167 1/7.3
+//
+typedef struct {
+  UINT16           TypeAndTimezone;
+  INT16            Year;
+  UINT8            Month;
+  UINT8            Day;
+  UINT8            Hour;
+  UINT8            Minute;
+  UINT8            Second;
+  UINT8            Centiseconds;
+  UINT8            HundredsOfMicroseconds;
+  UINT8            Microseconds;
+} UDF_TIMESTAMP;
+
+//
+// ECMA 167 3/7.1
+//
+typedef struct {
+  UINT32           ExtentLength;
+  UINT32           ExtentLocation;
+} UDF_EXTENT_AD;
+
+//
+// ECMA 167 4/7.1
+//
+typedef struct {
+  UINT32         LogicalBlockNumber;
+  UINT16         PartitionReferenceNumber;
+} UDF_LB_ADDR;
+
+//
+// ECMA 167 4/14.14.2
+//
+typedef struct {
+  UINT32                            ExtentLength;
+  UDF_LB_ADDR                       ExtentLocation;
+  UINT8                             ImplementationUse[6];
+} UDF_LONG_ALLOCATION_DESCRIPTOR;
+
+typedef struct {
+  UDF_DESCRIPTOR_TAG               DescriptorTag;
+  UINT32                           VolumeDescriptorSequenceNumber;
+  UINT32                           PrimaryVolumeDescriptorNumber;
+  UINT8                            VolumeIdentifier[32];
+  UINT16                           VolumeSequenceNumber;
+  UINT16                           MaximumVolumeSequenceNumber;
+  UINT16                           InterchangeLevel;
+  UINT16                           MaximumInterchangeLevel;
+  UINT32                           CharacterSetList;
+  UINT32                           MaximumCharacterSetList;
+  UINT8                            VolumeSetIdentifier[128];
+  UDF_CHAR_SPEC                    DescriptorCharacterSet;
+  UDF_CHAR_SPEC                    ExplanatoryCharacterSet;
+  UDF_EXTENT_AD                    VolumeAbstract;
+  UDF_EXTENT_AD                    VolumeCopyrightNotice;
+  UDF_ENTITY_ID                    ApplicationIdentifier;
+  UDF_TIMESTAMP                    RecordingDateAndTime;
+  UDF_ENTITY_ID                    ImplementationIdentifier;
+  UINT8                            ImplementationUse[64];
+  UINT32                           PredecessorVolumeDescriptorSequenceLocation;
+  UINT16                           Flags;
+  UINT8                            Reserved[22];
+} UDF_PRIMARY_VOLUME_DESCRIPTOR;
+
+typedef struct {
+  UDF_DESCRIPTOR_TAG                      DescriptorTag;
+  UDF_EXTENT_AD                           MainVolumeDescriptorSequenceExtent;
+  UDF_EXTENT_AD                           ReserveVolumeDescriptorSequenceExtent;
+  UINT8                                   Reserved[480];
+} UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER;
+
+//
+// ECMA 167 3/10.5
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG          DescriptorTag;
+  UINT32                      VolumeDescriptorSequenceNumber;
+  UINT16                      PartitionFlags;
+  UINT16                      PartitionNumber;
+  UDF_ENTITY_ID               PartitionContents;
+  UINT8                       PartitionContentsUse[128];
+  UINT32                      AccessType;
+  UINT32                      PartitionStartingLocation;
+  UINT32                      PartitionLength;
+  UDF_ENTITY_ID               ImplementationIdentifier;
+  UINT8                       ImplementationUse[128];
+  UINT8                       Reserved[156];
+} UDF_PARTITION_DESCRIPTOR;
+
+//
+// ECMA 167 3/10.6
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG               DescriptorTag;
+  UINT32                           VolumeDescriptorSequenceNumber;
+  UDF_CHAR_SPEC                    DescriptorCharacterSet;
+  UINT8                            LogicalVolumeIdentifier[128];
+  UINT32                           LogicalBlockSize;
+  UDF_ENTITY_ID                    DomainIdentifier;
+  UDF_LONG_ALLOCATION_DESCRIPTOR   LogicalVolumeContentsUse;
+  UINT32                           MapTableLength;
+  UINT32                           NumberOfPartitionMaps;
+  UDF_ENTITY_ID                    ImplementationIdentifier;
+  UINT8                            ImplementationUse[128];
+  UDF_EXTENT_AD                    IntegritySequenceExtent;
+  UINT8                            PartitionMaps[6];
+} UDF_LOGICAL_VOLUME_DESCRIPTOR;
+
+//
+// ECMA 167 3/10.8
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG                  DescriptorTag;
+  UINT32                              VolumeDescriptorSequenceNumber;
+  UINT32                              NumberOfAllocationDescriptors;
+  UDF_EXTENT_AD                       AllocationDescriptors[0];
+} UDF_UNALLOCATED_SPACE_DESCRIPTOR;
+
+typedef struct {
+  UDF_DESCRIPTOR_TAG                         DescriptorTag;
+  UDF_TIMESTAMP                              RecordingDateAndTime;
+  UINT32                                     IntegrityType;
+  UDF_EXTENT_AD                              NextIntegrityExtent;
+  UINT8                                      LogicalVolumeContentsUse[32];
+  UINT32                                     NumberOfPartitions;
+  UINT32                                     LengthOfImplementationUse; // L_UI
+  UINT32                                     FreeSpaceTable;
+  UINT32                                     SizeTable;
+  UINT8                                      ImplementationUse[0]; // See 2.2.6.4
+} UDF_LOGICAL_VOLUME_INTEGRITY_DESCRIPTOR;
+
+//
+// ECMA 167 3/10.4
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG                          DescriptorTag;
+  UINT32                                      VolumeDescriptorSequenceNumber;
+  UDF_ENTITY_ID                               ImplementationIdentifier;
+  struct {
+    UDF_CHAR_SPEC    LvICharset;
+    UINT8            LogicalVolumeIdentifier[128];
+    UINT8            LvInfo1[36];
+    UINT8            LvInfo2[36];
+    UINT8            LvInfo3[36];
+    UDF_ENTITY_ID    ImplementationId;
+    UINT8            ImplementationUse[128];
+  } LvInformation;
+} UDF_IMPLEMENTATION_USE_VOLUME_DESCRIPTOR;
+
+//
+// ECMA 167 4/14.1
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG               DescriptorTag;
+  UDF_TIMESTAMP                    RecordingDateAndTime;
+  UINT16                           InterchangeLevel;
+  UINT16                           MaximumInterchangeLevel;
+  UINT32                           CharacterSetList;
+  UINT32                           MaximumCharacterSetList;
+  UINT32                           FileSetNumber;
+  UINT32                           FileSetDescriptorNumber;
+  UDF_CHAR_SPEC                    LogicalVolumeIdentifierCharacterSet;
+  UINT8                            LogicalVolumeIdentifier[128];
+  UDF_CHAR_SPEC                    FileSetCharacterSet;
+  UINT8                            FileSetIdentifier[32];
+  UINT8                            CopyrightFileIdentifier[32];
+  UINT8                            AbstractFileIdentifier[32];
+  UDF_LONG_ALLOCATION_DESCRIPTOR   RootDirectoryIcb;
+  UDF_ENTITY_ID                    DomainIdentifier;
+  UDF_LONG_ALLOCATION_DESCRIPTOR   NextExtent;
+  UDF_LONG_ALLOCATION_DESCRIPTOR   SystemStreamDirectoryIcb;
+  UINT8                            Reserved[32];
+} UDF_FILE_SET_DESCRIPTOR;
+
+//
+// ECMA 167 4/14.14.1
+//
+typedef struct {
+  UINT32                             ExtentLength;
+  UINT32                             ExtentPosition;
+} UDF_SHORT_ALLOCATION_DESCRIPTOR;
+
+//
+// ECMA 167 4/14.3
+//
+typedef struct {
+  UDF_SHORT_ALLOCATION_DESCRIPTOR    UnallocatedSpaceTable;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR    UnallocatedSpaceBitmap;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR    PartitionIntegrityTable;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR    FreedSpaceTable;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR    FreedSpaceBitmap;
+  UINT8                              Reserved[88];
+} UDF_PARTITION_HEADER_DESCRIPTOR;
+
+//
+// ECMA 167 4/14.3
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG                DescriptorTag;
+  UINT16                            FileVersionNumber;
+  UINT8                             FileCharacteristics;
+  UINT8                             LengthOfFileIdentifier;
+  UDF_LONG_ALLOCATION_DESCRIPTOR    Icb;
+  UINT16                            LengthOfImplementationUse;
+  UINT8                             ImplementationUse_FileIdentifier_Padding[0];
+} UDF_FILE_IDENTIFIER_DESCRIPTOR;
+
+//
+// ECMA 167 4/14.6
+//
+typedef struct {
+  UINT32         PriorRecordNumberOfDirectEntries;
+  UINT16         StrategyType;
+  UINT16         StrategyParameter;
+  UINT16         MaximumNumberOfEntries;
+  UINT8          Reserved;
+  UINT8          FileType;
+  UDF_LB_ADDR    ParentIcbLocation;
+  UINT16         Flags;
+} UDF_ICB_TAG;
+
+//
+// ECMA 167 4/14.9
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG               DescriptorTag;
+  UDF_ICB_TAG                      IcbTag;
+  UINT32                           Uid;
+  UINT32                           Gid;
+  UINT32                           Permissions;
+  UINT16                           FileLinkCount;
+  UINT8                            RecordFormat;
+  UINT8                            RecordDisplayAttributes;
+  UINT32                           RecordLength;
+  UINT64                           InformationLength;
+  UINT64                           LogicalBlocksRecorded;
+  UDF_TIMESTAMP                    AccessTime;
+  UDF_TIMESTAMP                    ModificationTime;
+  UDF_TIMESTAMP                    AttributeTime;
+  UINT32                           CheckPoint;
+  UDF_LONG_ALLOCATION_DESCRIPTOR   ExtendedAttributeIcb;
+  UDF_ENTITY_ID                    ImplementationIdentifier;
+  UINT64                           UniqueId;
+  UINT32                           LengthOfExtendedAttributes;
+  UINT32                           LengthOfAllocationDescriptors;
+  UINT8                            EAArea[0]; // L_EA and L_AD
+} UDF_FILE_ENTRY;
+
+//
+// ECMA 167 4/14.11
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG             DescriptorTag;
+  UDF_ICB_TAG                    IcbTag;
+  UINT32                         LengthOfAllocationDescriptors;
+  UINT8                          AllocationDescriptors[0];
+} UDF_UNALLOCATED_SPACE_ENTRY;
+
+//
+// ECMA 167 4/14.12
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG   DescriptorTag;
+  UINT32               NumberOfBits;
+  UINT32               NumberOfBytes;
+  UINT8                Bitmap[0];
+} UDF_SPACE_BITMAP;
+
+//
+// ECMA 167 4/14.5
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG                  DescriptorTag;
+  UINT32                              PreviousAllocationExtentLocation;
+  UINT32                              LengthOfAllocationDescriptors;
+} UDF_ALLOCATION_EXTENT_DESCRIPTOR;
+
+//
+// ECMA 167 4/16.1
+//
+typedef struct {
+  UINT8                 ComponentType;
+  UINT8                 LengthOfComponentIdentifier;
+  UINT16                ComponentFileVersionNumber;
+  UINT8                 ComponentIdentifier[0];
+} UDF_PATH_COMPONENT;
+
+//
+// ECMA 167 4/14.15
+//
+typedef struct {
+  UINT64                                  UniqueId;
+  UINT8                                   Reserved[24];
+} UDF_LOGICAL_VOLUME_HEADER_DESCRIPTOR;
+
+//
+// ECMA 167 3/9.1
+//
+typedef struct {
+  UINT8                 StructureType;
+  UINT8                 StandardIdentifier[5];
+  UINT8                 StructureVersion;
+  UINT8                 Reserved;
+  UINT8                 StructureData[2040];
+} UDF_NSR_DESCRIPTOR;
+
+#pragma pack()
+
 //
 // Global Variables
 //
@@ -44,6 +407,20 @@ extern EFI_COMPONENT_NAME2_PROTOCOL  gUdfComponentName2;
 //
 // Function Prototypes
 //
+EFI_STATUS
+EFIAPI
+FindRootDirectory (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UINT32                                  BlockSize,
+  OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   **AnchorPoint,
+  OUT UDF_PARTITION_DESCRIPTOR               **PartitionDesc,
+  OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          **LogicalVolDesc,
+  OUT UDF_FILE_SET_DESCRIPTOR                **FileSetDesc,
+  OUT UDF_FILE_ENTRY                         **FileEntry,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FileIdentifierDesc
+  );
+
 /**
   Test to see if this driver supports ControllerHandle. Any ControllerHandle
   than contains a BlockIo and DiskIo protocol can be supported.
