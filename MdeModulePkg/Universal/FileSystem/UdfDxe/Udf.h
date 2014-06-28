@@ -461,6 +461,20 @@ FileIdentifierDescToFilename (
   OUT UINT16                          **Filename
   );
 
+EFI_STATUS
+EFIAPI
+ListDirectoryFids (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 BlockSize,
+  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
+  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
+  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
+  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc
+  );
+
 /**
   Test to see if this driver supports ControllerHandle. Any ControllerHandle
   than contains a BlockIo and DiskIo protocol can be supported.

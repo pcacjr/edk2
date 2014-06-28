@@ -14,6 +14,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
+//#define UDF_DEBUG
+
 STATIC
 EFI_STATUS
 FindAnchorVolumeDescriptorPointer (
@@ -548,13 +550,13 @@ FindFileIdentifierDescriptorRootDir (
   LongAd = &FileIdentifierDesc->Icb;
 
   Print (
-    L"UdfDriverStart: [ROOT-FID] LBN of FE:                 %d (0x%08x)\n",
+    L"UdfDriverStart: [ROOT-FID] LBN of FE:                %d (0x%08x)\n",
     LongAd->ExtentLocation.LogicalBlockNumber,
     LongAd->ExtentLocation.LogicalBlockNumber
     );
 
   Print (
-    L"UdfDriverStart: [ROOT-FID] Extent length of FE:       %d (0x%08x)\n",
+    L"UdfDriverStart: [ROOT-FID] Extent length of FE:      %d (0x%08x)\n",
     LongAd->ExtentLength,
     LongAd->ExtentLength
     );
@@ -688,19 +690,18 @@ ReadDirectory (
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        **ReadFileIdentifierDesc
   )
 {
-  EFI_STATUS                                 Status;
-  UDF_LONG_ALLOCATION_DESCRIPTOR             *LongAd;
-  UINT32                                     Lsn;
-  UINT64                                     ParentOffset;
-  UINT64                                     FidLength;
-  UINT64                                     Offset;
-  UINT64                                     EndingPartitionOffset;
-  VOID                                       *Buffer;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR             *FileIdentifierDesc;
-  UDF_DESCRIPTOR_TAG                         *DescriptorTag;
-  VOID                                       *PrevFileIdentifier;
-  VOID                                       *FileIdentifier;
-  //UDF_FILE_ENTRY                             *FileEntry;
+  EFI_STATUS                                Status;
+  UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
+  UINT32                                    Lsn;
+  UINT64                                    ParentOffset;
+  UINT64                                    FidLength;
+  UINT64                                    Offset;
+  UINT64                                    EndingPartitionOffset;
+  VOID                                      *Buffer;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR            *FileIdentifierDesc;
+  UDF_DESCRIPTOR_TAG                        *DescriptorTag;
+  VOID                                      *PrevFileIdentifier;
+  VOID                                      *FileIdentifier;
 
   Status = EFI_SUCCESS;
 
@@ -737,7 +738,9 @@ ReadDirectory (
      (ParentFileIdentifierDesc->LengthOfFileIdentifier +
       ParentFileIdentifierDesc->LengthOfImplementationUse + 38));
 
+#ifdef UDF_DEBUG
   Print (L"UdfDriverStart: [ReadDirectory] Parent FidLength: %d\n", FidLength);
+#endif
 
   //
   // Calculate offset of the FID right next to Parent FID
@@ -764,12 +767,10 @@ ReadDirectory (
   // First FID to be read
   //
   if (!PrevFileIdentifierDesc) {
-    Print (L"UdfDriverStart: [ReadDirectory] First case\n");
     goto ReadNextFid;
   }
 
-  Print (L"UdfDriverStart: [ReadDirectory] Second case\n");
-
+#ifdef UDF_DEBUG
   Print (
     L"UdfDriverStart: [ReadDirectory] Prev ImpUseLen: %d\n",
     PrevFileIdentifierDesc->LengthOfImplementationUse
@@ -779,6 +780,7 @@ ReadDirectory (
     L"UdfDriverStart: [ReadDirectory] Prev FiLen: %d\n",
     PrevFileIdentifierDesc->LengthOfFileIdentifier
     );
+#endif
 
   //
   // Next FID is not first one of the reading.
@@ -802,21 +804,19 @@ ReadDirectory (
 
     DescriptorTag = &FileIdentifierDesc->DescriptorTag;
 
+#ifdef UDF_DEBUG
     Print (
       L"UdfDriverStart: [FID] Tag Identifier: %d (0x%08x)\n",
       DescriptorTag->TagIdentifier,
       DescriptorTag->TagIdentifier
       );
+#endif
 
     if (!IS_FID (Buffer)) {
-      Print (
-	L"UdfDriverStart: [FID] Invalid tag identifier number\n"
-	);
-
-      Status = EFI_UNSUPPORTED;
       goto FreeExit;
     }
 
+#ifdef UDF_DEBUG
     Print (
       L"UdfDriverStart: [ReadDirectory] Cur ImpUseLen: %d\n",
       FileIdentifierDesc->LengthOfImplementationUse
@@ -826,6 +826,7 @@ ReadDirectory (
       L"UdfDriverStart: [ReadDirectory] Cur FiLen: %d\n",
       FileIdentifierDesc->LengthOfFileIdentifier
       );
+#endif
 
     FidLength = sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR) +
       FileIdentifierDesc->LengthOfFileIdentifier +
@@ -835,7 +836,9 @@ ReadDirectory (
        (FileIdentifierDesc->LengthOfFileIdentifier +
 	FileIdentifierDesc->LengthOfImplementationUse + 38));
 
+#ifdef UDF_DEBUG
     Print (L"UdfDriverStart: [ReadDirectory] Cur FidLength: %d\n", FidLength);
+#endif
 
     if (
       PrevFileIdentifierDesc->LengthOfFileIdentifier ==
@@ -869,7 +872,7 @@ ReadDirectory (
   } while (Offset < EndingPartitionOffset);
 
   //
-  // End of directory listening
+  // End of directory listing
   //
   FreePool(Buffer);
 
@@ -894,21 +897,19 @@ ReadNextFid:
 
   DescriptorTag = &FileIdentifierDesc->DescriptorTag;
 
+#ifdef UDF_DEBUG
   Print (
     L"UdfDriverStart: [FID] Tag Identifier: %d (0x%08x)\n",
     DescriptorTag->TagIdentifier,
     DescriptorTag->TagIdentifier
     );
+#endif
 
   if (!IS_FID (FileIdentifierDesc)) {
-    Print (
-      L"UdfDriverStart: [FID] Invalid tag identifier number\n"
-      );
-
-    Status = EFI_UNSUPPORTED;
     goto FreeExit;
   }
 
+#ifdef UDF_DEBUG
   Print (
     L"UdfDriverStart: [ReadDirectory] ImpUseLen: %d\n",
     FileIdentifierDesc->LengthOfImplementationUse
@@ -918,6 +919,7 @@ ReadNextFid:
     L"UdfDriverStart: [ReadDirectory] FiLen: %d\n",
     FileIdentifierDesc->LengthOfFileIdentifier
     );
+#endif
 
   *ReadFileIdentifierDesc = FileIdentifierDesc;
 
@@ -959,6 +961,72 @@ FileIdentifierDescToFilename (
     );
 
   (*Filename)[FileIdentifierDesc->LengthOfFileIdentifier + 1] = 0;
+
+Exit:
+  return Status;
+}
+
+EFI_STATUS
+EFIAPI
+ListDirectoryFids (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 BlockSize,
+  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
+  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
+  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
+  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc
+  )
+{
+  EFI_STATUS                                Status;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR            *PrevFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR            *NextFileIdentifierDesc;
+  UINT16                                    *Filename;
+
+  PrevFileIdentifierDesc = NULL;
+
+  Print(L"Listing parent directory FIDs:\n");
+
+  for (;;) {
+    Status = ReadDirectory (
+                        BlockIo,
+			DiskIo,
+			BlockSize,
+			AnchorPoint,
+		        PartitionDesc,
+		        LogicalVolDesc,
+		        FileSetDesc,
+		        ParentFileEntry,
+		        ParentFileIdentifierDesc,
+			PrevFileIdentifierDesc,
+		        &NextFileIdentifierDesc
+			);
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+
+    if (!NextFileIdentifierDesc) {
+      break;
+    }
+
+    Status = FileIdentifierDescToFilename (NextFileIdentifierDesc, &Filename);
+    if (EFI_ERROR (Status)) {
+      goto FreeExit;
+    }
+
+    Print (L"    %s\n", Filename);
+
+    if (PrevFileIdentifierDesc) {
+      FreePool((VOID *)PrevFileIdentifierDesc);
+    }
+
+    PrevFileIdentifierDesc = NextFileIdentifierDesc;
+  }
+
+FreeExit:
+  FreePool((VOID *)PrevFileIdentifierDesc);
 
 Exit:
   return Status;
