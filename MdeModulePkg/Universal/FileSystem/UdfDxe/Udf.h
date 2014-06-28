@@ -21,6 +21,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Protocol/DevicePath.h>
 #include <Protocol/DriverBinding.h>
 #include <Protocol/DiskIo.h>
+#include <Protocol/SimpleFileSystem.h>
 #include <Library/DebugLib.h>
 #include <Library/UefiDriverEntryPoint.h>
 #include <Library/BaseLib.h>
@@ -29,10 +30,6 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DevicePathLib.h>
-
-//
-// UDF filesystem driver's private data
-//
 
 #define FIRST_ANCHOR_POINT_LSN                ((UINT32)0x0000000000000100UL)
 
@@ -415,6 +412,57 @@ typedef struct {
 #pragma pack()
 
 //
+// UDF filesystem driver's private data
+//
+#define PRIVATE_UDF_FILE_DATA_SIGNATURE SIGNATURE_32 ('u', 'd', 'f', 'f')
+
+#define PRIVATE_UDF_FILE_DATA_FROM_THIS(a) \
+  CR ( \
+      a, \
+      PRIVATE_UDF_FILE_DATA, \
+      FileIo, \
+      PRIVATE_UDF_FILE_DATA_SIGNATURE \
+      )
+
+typedef struct {
+  UINTN                                  Signature;
+
+  struct {
+    UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
+    UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+    UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
+    UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
+    UDF_FILE_ENTRY                         *FileEntry;
+    UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
+  } UdfFileSystemData;
+
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINT32                                 BlockSize;
+  EFI_FILE_PROTOCOL                      FileIo;
+} PRIVATE_UDF_FILE_DATA;
+
+#define PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE SIGNATURE_32 ('u', 'd', 'f', 's')
+
+#define PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS(a) \
+  CR ( \
+      a, \
+      PRIVATE_UDF_SIMPLE_FS_DATA, \
+      SimpleFs, \
+      PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE \
+      )
+
+typedef struct {
+  UINTN                             Signature;
+  EFI_BLOCK_IO_PROTOCOL             *BlockIo;
+  EFI_DISK_IO_PROTOCOL              *DiskIo;
+  UINT32                            BlockSize;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL   SimpleFs;
+  EFI_HANDLE                        Handle;
+} PRIVATE_UDF_SIMPLE_FS_DATA;
+
+//
 // Global Variables
 //
 extern EFI_DRIVER_BINDING_PROTOCOL   gUdfDriverBinding;
@@ -424,6 +472,244 @@ extern EFI_COMPONENT_NAME2_PROTOCOL  gUdfComponentName2;
 //
 // Function Prototypes
 //
+
+/**
+  Open the root directory on a volume.
+
+  @param  This Protocol instance pointer.
+  @param  Root Returns an Open file handle for the root directory
+
+  @retval EFI_SUCCESS          The device was opened.
+  @retval EFI_UNSUPPORTED      This volume does not support the file system.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_ACCESS_DENIED    The service denied access to the file.
+  @retval EFI_OUT_OF_RESOURCES The volume was not opened due to lack of resources.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfOpenVolume (
+  IN EFI_SIMPLE_FILE_SYSTEM_PROTOCOL     *This,
+  OUT EFI_FILE_PROTOCOL                  **Root
+  );
+
+/**
+  Opens a new file relative to the source file's location.
+
+  @param  This       The protocol instance pointer.
+  @param  NewHandle  Returns File Handle for FileName.
+  @param  FileName   Null terminated string. "\", ".", and ".." are supported.
+  @param  OpenMode   Open mode for file.
+  @param  Attributes Only used for EFI_FILE_MODE_CREATE.
+
+  @retval EFI_SUCCESS          The device was opened.
+  @retval EFI_NOT_FOUND        The specified file could not be found on the device.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_MEDIA_CHANGED    The media has changed.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_ACCESS_DENIED    The service denied access to the file.
+  @retval EFI_OUT_OF_RESOURCES The volume was not opened due to lack of resources.
+  @retval EFI_VOLUME_FULL      The volume is full.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfOpen (
+  IN  EFI_FILE_PROTOCOL         *This,
+  OUT EFI_FILE_PROTOCOL         **NewHandle,
+  IN  CHAR16                    *FileName,
+  IN  UINT64                    OpenMode,
+  IN  UINT64                    Attributes
+  );
+
+/**
+  Read data from the file.
+
+  @param  This       Protocol instance pointer.
+  @param  BufferSize On input size of buffer, on output amount of data in buffer.
+  @param  Buffer     The buffer in which data is read.
+
+  @retval EFI_SUCCESS          Data was read.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_BUFFER_TO_SMALL  BufferSize is too small. BufferSize contains required size.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfRead (
+  IN     EFI_FILE_PROTOCOL  *This,
+  IN OUT UINTN              *BufferSize,
+  OUT    VOID               *Buffer
+  );
+
+/**
+  Close the file handle
+
+  @param  This          Protocol instance pointer.
+
+  @retval EFI_SUCCESS   The file was closed.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfClose (
+  IN EFI_FILE_PROTOCOL  *This
+  );
+
+/**
+  Close and delete the file handle.
+
+  @param  This                     Protocol instance pointer.
+
+  @retval EFI_SUCCESS              The file was closed and deleted.
+  @retval EFI_WARN_DELETE_FAILURE  The handle was closed but the file was not deleted.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfDelete (
+  IN EFI_FILE_PROTOCOL  *This
+  );
+
+/**
+  Write data to a file.
+
+  @param  This       Protocol instance pointer.
+  @param  BufferSize On input size of buffer, on output amount of data in buffer.
+  @param  Buffer     The buffer in which data to write.
+
+  @retval EFI_SUCCESS          Data was written.
+  @retval EFI_UNSUPPORTED      Writes to Open directory are not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_DEVICE_ERROR     An attempt was made to write to a deleted file.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+  @retval EFI_VOLUME_FULL      The volume is full.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfWrite (
+  IN     EFI_FILE_PROTOCOL  *This,
+  IN OUT UINTN              *BufferSize,
+  IN     VOID               *Buffer
+  );
+
+/**
+  Get a file's current position
+
+  @param  This            Protocol instance pointer.
+  @param  Position        Byte position from the start of the file.
+
+  @retval EFI_SUCCESS     Position was updated.
+  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfGetPosition (
+  IN  EFI_FILE_PROTOCOL   *This,
+  OUT UINT64              *Position
+  );
+
+/**
+  Set file's current position
+
+  @param  This            Protocol instance pointer.
+  @param  Position        Byte position from the start of the file.
+
+  @retval EFI_SUCCESS     Position was updated.
+  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open..
+
+**/
+EFI_STATUS
+EFIAPI
+UdfSetPosition (
+  IN EFI_FILE_PROTOCOL  *This,
+  IN UINT64             Position
+  );
+
+/**
+  Get information about a file.
+
+  @param  This            Protocol instance pointer.
+  @param  InformationType Type of information to return in Buffer.
+  @param  BufferSize      On input size of buffer, on output amount of data in buffer.
+  @param  Buffer          The buffer to return data.
+
+  @retval EFI_SUCCESS          Data was returned.
+  @retval EFI_UNSUPPORTED      InformationType is not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+  @retval EFI_BUFFER_TOO_SMALL Buffer was too small; required size returned in BufferSize.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfGetInfo (
+  IN     EFI_FILE_PROTOCOL  *This,
+  IN     EFI_GUID           *InformationType,
+  IN OUT UINTN              *BufferSize,
+  OUT    VOID               *Buffer
+  );
+
+/**
+  Set information about a file
+
+  @param  File            Protocol instance pointer.
+  @param  InformationType Type of information in Buffer.
+  @param  BufferSize      Size of buffer.
+  @param  Buffer          The data to write.
+
+  @retval EFI_SUCCESS          Data was set.
+  @retval EFI_UNSUPPORTED      InformationType is not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfSetInfo (
+  IN EFI_FILE_PROTOCOL*This,
+  IN EFI_GUID         *InformationType,
+  IN UINTN            BufferSize,
+  IN VOID             *Buffer
+  );
+
+/**
+  Flush data back for the file handle.
+
+  @param  This Protocol instance pointer.
+
+  @retval EFI_SUCCESS          Data was flushed.
+  @retval EFI_UNSUPPORTED      Writes to Open directory are not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+  @retval EFI_VOLUME_FULL      The volume is full.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfFlush (
+  IN EFI_FILE_PROTOCOL  *This
+  );
+
 EFI_STATUS
 EFIAPI
 FindRootDirectory (
@@ -456,9 +742,9 @@ ReadDirectory (
 
 EFI_STATUS
 EFIAPI
-FileIdentifierDescToFilename (
+FileIdentifierDescToFileName (
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  OUT UINT16                          **Filename
+  OUT UINT16                          **FileName
   );
 
 EFI_STATUS

@@ -117,12 +117,14 @@ UdfDriverBindingStart (
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   UINT32                                 BlockSize;
-  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
-  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
-  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
-  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
-  UDF_FILE_ENTRY                         *RootFileEntry;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR         *RootFileIdentifierDesc;
+  PRIVATE_UDF_SIMPLE_FS_DATA             *PrivFsData;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
+  EFI_FILE_PROTOCOL                      *Root;
+  EFI_FILE_PROTOCOL                      *NewRoot0;
+  EFI_FILE_PROTOCOL                      *NewRoot1;
+
+#define TEST_FILENAME0                    L"\\efi\\microsoft\\boot\\"
+#define TEST_FILENAME1                    L"cdboot.efi"
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -175,6 +177,58 @@ UdfDriverBindingStart (
   //
   BlockSize = 2048;
 
+  PrivFsData = AllocateZeroPool (sizeof (PRIVATE_UDF_SIMPLE_FS_DATA));
+  if (!PrivFsData) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Exit;
+  }
+
+  //
+  // Set up new child handle
+  //
+  PrivFsData->Signature   = PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE;
+  PrivFsData->BlockIo     = BlockIo;
+  PrivFsData->DiskIo      = DiskIo;
+  PrivFsData->BlockSize   = BlockSize;
+
+  PrivFsData->SimpleFs.Revision   = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
+  PrivFsData->SimpleFs.OpenVolume = UdfOpenVolume;
+
+  PrivFsData->Handle = NULL;
+
+  //
+  // Install new child handle
+  //
+  Status = gBS->InstallMultipleProtocolInterfaces (
+                                      &PrivFsData->Handle,
+				      &gEfiSimpleFileSystemProtocolGuid,
+				      &PrivFsData->SimpleFs,
+				      NULL,
+				      NULL
+                                      );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+#if 1
+  SimpleFs = &PrivFsData->SimpleFs;
+
+  Status = SimpleFs->OpenVolume (SimpleFs, &Root);
+  ASSERT_EFI_ERROR (Status);
+
+  Print (L"\n");
+
+  Status = Root->Open (Root, &NewRoot0, TEST_FILENAME0, 0, 0);
+  ASSERT_EFI_ERROR (Status);
+
+  Print (L"\n");
+
+  Status = Root->Open (NewRoot0, &NewRoot1, TEST_FILENAME1, 0, 0);
+  ASSERT_EFI_ERROR (Status);
+
+  Print (L"\n");
+#endif
+#if 0
   Print (L"UdfDriverStart: Defaulting to logical block size of 2048\n");
 
   Status = FindRootDirectory (
@@ -214,14 +268,15 @@ UdfDriverBindingStart (
   }
 
   Print (L"\n");
-
-  Print (L"UdfDriverStart: Done (%r)\n", EFI_SUCCESS);
-
+#endif
   //
   // FIXME: Leaking too much memory. Free all of them before exiting!
   //
 Exit:
   gBS->RestoreTPL (OldTpl);
+
+  Print (L"UdfDriverStart: Done (%r)\n", Status);
+
   return Status;
 }
 

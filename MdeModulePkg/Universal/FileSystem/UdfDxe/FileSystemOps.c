@@ -16,6 +16,586 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 //#define UDF_DEBUG
 
+/**
+  Open the root directory on a volume.
+
+  @param  This Protocol instance pointer.
+  @param  Root Returns an Open file handle for the root directory
+
+  @retval EFI_SUCCESS          The device was opened.
+  @retval EFI_UNSUPPORTED      This volume does not support the file system.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_ACCESS_DENIED    The service denied access to the file.
+  @retval EFI_OUT_OF_RESOURCES The volume was not opened due to lack of resources.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfOpenVolume (
+  IN EFI_SIMPLE_FILE_SYSTEM_PROTOCOL     *This,
+  OUT EFI_FILE_PROTOCOL                  **Root
+  )
+{
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_SIMPLE_FS_DATA             *PrivFsData;
+  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
+  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
+  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
+  UDF_FILE_ENTRY                         *RootFileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *RootFileIdentifierDesc;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (This);
+
+  Status = FindRootDirectory (
+                          PrivFsData->BlockIo,
+                          PrivFsData->DiskIo,
+			  PrivFsData->BlockSize,
+			  &AnchorPoint,
+			  &PartitionDesc,
+			  &LogicalVolDesc,
+			  &FileSetDesc,
+			  &RootFileEntry,
+			  &RootFileIdentifierDesc
+                          );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  PrivFileData = AllocatePool (sizeof (PRIVATE_UDF_FILE_DATA));
+  if (!PrivFileData) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto FreeExit;
+  }
+
+  PrivFileData->UdfFileSystemData.AnchorPoint            = AnchorPoint;
+  PrivFileData->UdfFileSystemData.PartitionDesc          = PartitionDesc;
+  PrivFileData->UdfFileSystemData.LogicalVolDesc         = LogicalVolDesc;
+  PrivFileData->UdfFileSystemData.FileSetDesc            = FileSetDesc;
+  PrivFileData->UdfFileSystemData.FileEntry              = RootFileEntry;
+  PrivFileData->UdfFileSystemData.FileIdentifierDesc = RootFileIdentifierDesc;
+
+  PrivFileData->Signature   = PRIVATE_UDF_FILE_DATA_SIGNATURE;
+  PrivFileData->SimpleFs    = This;
+  PrivFileData->BlockIo     = PrivFsData->BlockIo;
+  PrivFileData->DiskIo      = PrivFsData->DiskIo;
+  PrivFileData->BlockSize   = PrivFsData->BlockSize;
+
+  PrivFileData->FileIo.Revision      = EFI_FILE_PROTOCOL_REVISION;
+  PrivFileData->FileIo.Open          = UdfOpen;
+  PrivFileData->FileIo.Close         = UdfClose;
+  PrivFileData->FileIo.Delete        = UdfDelete;
+  PrivFileData->FileIo.Read          = UdfRead;
+  PrivFileData->FileIo.Write         = UdfWrite;
+  PrivFileData->FileIo.GetPosition   = UdfGetPosition;
+  PrivFileData->FileIo.SetPosition   = UdfSetPosition;
+  PrivFileData->FileIo.GetInfo       = UdfGetInfo;
+  PrivFileData->FileIo.SetInfo       = UdfSetInfo;
+  PrivFileData->FileIo.Flush         = UdfFlush;
+
+  *Root = &PrivFileData->FileIo;
+
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
+
+FreeExit:
+  FreePool ((VOID *)AnchorPoint);
+  FreePool ((VOID *)PartitionDesc);
+  FreePool ((VOID *)LogicalVolDesc);
+  FreePool ((VOID *)FileSetDesc);
+  FreePool ((VOID *)RootFileEntry);
+  FreePool ((VOID *)RootFileIdentifierDesc);
+
+Exit:
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
+}
+
+/**
+  Opens a new file relative to the source file's location.
+
+  @param  This       The protocol instance pointer.
+  @param  NewHandle  Returns File Handle for FileName.
+  @param  FileName   Null terminated string. "\", ".", and ".." are supported.
+  @param  OpenMode   Open mode for file.
+  @param  Attributes Only used for EFI_FILE_MODE_CREATE.
+
+  @retval EFI_SUCCESS          The device was opened.
+  @retval EFI_NOT_FOUND        The specified file could not be found on the device.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_MEDIA_CHANGED    The media has changed.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_ACCESS_DENIED    The service denied access to the file.
+  @retval EFI_OUT_OF_RESOURCES The volume was not opened due to lack of resources.
+  @retval EFI_VOLUME_FULL      The volume is full.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfOpen (
+  IN  EFI_FILE_PROTOCOL                  *This,
+  OUT EFI_FILE_PROTOCOL                  **NewHandle,
+  IN  CHAR16                             *FileName,
+  IN  UINT64                             OpenMode,
+  IN  UINT64                             Attributes
+  )
+{
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
+  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
+  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
+  UDF_FILE_ENTRY                         *ParentFileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *NextFileIdentifierDesc;
+  CHAR16                                 *Str;
+  CHAR16                                 *StrAux;
+  UINT64                                 Offset;
+  CHAR16                                 *NextFileName;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINT32                                 BlockSize;
+  BOOLEAN                                Found;
+  PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  if ((!This) || (!NewHandle) || (!FileName)) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Exit;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  AnchorPoint              = PrivFileData->UdfFileSystemData.AnchorPoint;
+  PartitionDesc            = PrivFileData->UdfFileSystemData.PartitionDesc;
+  LogicalVolDesc           = PrivFileData->UdfFileSystemData.LogicalVolDesc;
+  FileSetDesc              = PrivFileData->UdfFileSystemData.FileSetDesc;
+  ParentFileEntry          = PrivFileData->UdfFileSystemData.FileEntry;
+  ParentFileIdentifierDesc = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+
+  Print (L"UdfOpen: FileName \'%s\'\n", FileName);
+
+  Str = AllocateZeroPool ((StrLen (FileName) + 1) * sizeof (CHAR16));
+  if (!Str) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Exit;
+  }
+
+  BlockIo     = PrivFileData->BlockIo;
+  DiskIo      = PrivFileData->DiskIo;
+  BlockSize   = PrivFileData->BlockSize;
+  Found       = FALSE;
+  Status      = EFI_NOT_FOUND;
+
+  for (;;) {
+NextLookup:
+    PrevFileIdentifierDesc = NULL;
+
+    //
+    // Parse FileName
+    //
+    if (!*FileName) {
+      if (Found) {
+	Status = EFI_SUCCESS;
+      }
+
+      break;
+    }
+
+    Offset = 0;
+
+    //
+    // Discard any trailing whitespaces in the beginning
+    //
+    for ( ; (*FileName) && (*FileName == ' '); FileName++)
+      ;
+
+    while ((*FileName) && (*FileName != '\\')) {
+      CopyMem (
+	(VOID *)((UINT8 *)Str + Offset),
+	(VOID *)FileName,
+	sizeof (CHAR16)
+	);
+
+      Offset += sizeof (CHAR16);
+      FileName++;
+    }
+
+    if (*FileName == '\\') {
+      FileName++;
+    }
+
+    *((UINT8 *)Str + Offset) = '\0';
+
+    StrAux = Str;
+
+    //
+    // Discard any trailing whitespaces in the beginning
+    //
+    for ( ; (*StrAux) && (*StrAux == ' '); StrAux++)
+      ;
+
+    if (!*StrAux) {
+      continue;
+    }
+
+    Found = FALSE;
+
+#ifdef UDF_DEBUG
+    Print (
+      L"UdfOpen: Start looking up \'%s\' (Length: %d)\n",
+      StrAux,
+      StrLen (StrAux)
+      );
+#endif
+
+    //
+    // Start lookup
+    //
+    for (;;) {
+      Status = ReadDirectory (
+	    BlockIo,
+	    DiskIo,
+	    BlockSize,
+	    AnchorPoint,
+	    PartitionDesc,
+	    LogicalVolDesc,
+	    FileSetDesc,
+	    ParentFileEntry,
+	    ParentFileIdentifierDesc,
+	    PrevFileIdentifierDesc,
+	    &NextFileIdentifierDesc
+	    );
+      if (EFI_ERROR (Status)) {
+	goto FreeExit;
+      }
+
+      if (!NextFileIdentifierDesc) {
+	Status = EFI_NOT_FOUND;
+	goto FreeExit;
+      }
+
+      //
+      // Ignore Parent files
+      //
+      if (IS_FID_PARENT_FILE (NextFileIdentifierDesc)) {
+	goto ReadNextFid;
+      }
+
+      Status = FileIdentifierDescToFileName (
+	                  NextFileIdentifierDesc,
+			  &NextFileName
+	                  );
+      if (EFI_ERROR (Status)) {
+	goto FreeExit;
+      }
+
+#ifdef UDF_DEBUG
+      Print (
+	L"UdfOpen: ===> %s (Length: %d)\n",
+	NextFileName,
+	StrLen (NextFileName)
+	);
+#endif
+
+      //
+      // Check whether FID's File Identifier contains the expected filename
+      //
+      if (CompareMem (
+	    (VOID *)NextFileName,
+	    (VOID *)StrAux,
+	    StrLen (StrAux)
+	    ) == 0) {
+
+	Print (L"UdfOpen: Found file \'%s\'\n", Str);
+
+	ParentFileIdentifierDesc = NextFileIdentifierDesc;
+
+	if (PrevFileIdentifierDesc) {
+	  FreePool ((VOID *) PrevFileIdentifierDesc);
+	}
+
+	Found = TRUE;
+
+	goto NextLookup;
+      }
+
+ReadNextFid:
+      if (PrevFileIdentifierDesc) {
+	FreePool ((VOID *) PrevFileIdentifierDesc);
+      }
+
+      PrevFileIdentifierDesc = NextFileIdentifierDesc;
+    }
+  }
+
+  if (Found) {
+    //
+    // Found file
+    //
+    NewPrivFileData = AllocatePool (sizeof (PRIVATE_UDF_FILE_DATA));
+    if (!NewPrivFileData) {
+      Status = EFI_OUT_OF_RESOURCES;
+      goto FreeExit;
+    }
+
+    CopyMem (
+      (VOID *)NewPrivFileData,
+      (VOID *)PrivFileData,
+      sizeof (PRIVATE_UDF_FILE_DATA)
+      );
+
+    //
+    // Set up new private filesystem metadata for the open file
+    //
+    NewPrivFileData->UdfFileSystemData.AnchorPoint            = AnchorPoint;
+    NewPrivFileData->UdfFileSystemData.PartitionDesc          = PartitionDesc;
+    NewPrivFileData->UdfFileSystemData.LogicalVolDesc         = LogicalVolDesc;
+    NewPrivFileData->UdfFileSystemData.FileSetDesc            = FileSetDesc;
+    NewPrivFileData->UdfFileSystemData.FileEntry              = ParentFileEntry;
+    NewPrivFileData->UdfFileSystemData.FileIdentifierDesc     = ParentFileIdentifierDesc;
+
+    *NewHandle = &NewPrivFileData->FileIo;
+  }
+
+FreeExit:
+  FreePool ((VOID *) Str);
+
+  if (PrevFileIdentifierDesc) {
+    FreePool ((VOID *) PrevFileIdentifierDesc);
+  }
+
+Exit:
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
+}
+
+/**
+  Read data from the file.
+
+  @param  This       Protocol instance pointer.
+  @param  BufferSize On input size of buffer, on output amount of data in buffer.
+  @param  Buffer     The buffer in which data is read.
+
+  @retval EFI_SUCCESS          Data was read.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_BUFFER_TO_SMALL  BufferSize is too small. BufferSize contains required size.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfRead (
+  IN     EFI_FILE_PROTOCOL  *This,
+  IN OUT UINTN              *BufferSize,
+  OUT    VOID               *Buffer
+  )
+{
+  return EFI_SUCCESS;
+}
+
+/**
+  Close the file handle
+
+  @param  This          Protocol instance pointer.
+
+  @retval EFI_SUCCESS   The file was closed.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfClose (
+  IN EFI_FILE_PROTOCOL  *This
+  )
+{
+  return EFI_SUCCESS;
+}
+
+/**
+  Close and delete the file handle.
+
+  @param  This                     Protocol instance pointer.
+
+  @retval EFI_SUCCESS              The file was closed and deleted.
+  @retval EFI_WARN_DELETE_FAILURE  The handle was closed but the file was not deleted.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfDelete (
+  IN EFI_FILE_PROTOCOL  *This
+  )
+{
+  return EFI_SUCCESS;
+}
+
+/**
+  Write data to a file.
+
+  @param  This       Protocol instance pointer.
+  @param  BufferSize On input size of buffer, on output amount of data in buffer.
+  @param  Buffer     The buffer in which data to write.
+
+  @retval EFI_SUCCESS          Data was written.
+  @retval EFI_UNSUPPORTED      Writes to Open directory are not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_DEVICE_ERROR     An attempt was made to write to a deleted file.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+  @retval EFI_VOLUME_FULL      The volume is full.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfWrite (
+  IN     EFI_FILE_PROTOCOL  *This,
+  IN OUT UINTN              *BufferSize,
+  IN     VOID               *Buffer
+  )
+{
+  return EFI_UNSUPPORTED;
+}
+
+/**
+  Get a file's current position
+
+  @param  This            Protocol instance pointer.
+  @param  Position        Byte position from the start of the file.
+
+  @retval EFI_SUCCESS     Position was updated.
+  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfGetPosition (
+  IN  EFI_FILE_PROTOCOL   *This,
+  OUT UINT64              *Position
+  )
+{
+  return EFI_SUCCESS;
+}
+
+/**
+  Set file's current position
+
+  @param  This            Protocol instance pointer.
+  @param  Position        Byte position from the start of the file.
+
+  @retval EFI_SUCCESS     Position was updated.
+  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open..
+
+**/
+EFI_STATUS
+EFIAPI
+UdfSetPosition (
+  IN EFI_FILE_PROTOCOL  *This,
+  IN UINT64             Position
+  )
+{
+  return EFI_SUCCESS;
+}
+
+/**
+  Get information about a file.
+
+  @param  This            Protocol instance pointer.
+  @param  InformationType Type of information to return in Buffer.
+  @param  BufferSize      On input size of buffer, on output amount of data in buffer.
+  @param  Buffer          The buffer to return data.
+
+  @retval EFI_SUCCESS          Data was returned.
+  @retval EFI_UNSUPPORTED      InformationType is not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+  @retval EFI_BUFFER_TOO_SMALL Buffer was too small; required size returned in BufferSize.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfGetInfo (
+  IN     EFI_FILE_PROTOCOL  *This,
+  IN     EFI_GUID           *InformationType,
+  IN OUT UINTN              *BufferSize,
+  OUT    VOID               *Buffer
+  )
+{
+  return EFI_ACCESS_DENIED;
+}
+
+/**
+  Set information about a file
+
+  @param  File            Protocol instance pointer.
+  @param  InformationType Type of information in Buffer.
+  @param  BufferSize      Size of buffer.
+  @param  Buffer          The data to write.
+
+  @retval EFI_SUCCESS          Data was set.
+  @retval EFI_UNSUPPORTED      InformationType is not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfSetInfo (
+  IN EFI_FILE_PROTOCOL*This,
+  IN EFI_GUID         *InformationType,
+  IN UINTN            BufferSize,
+  IN VOID             *Buffer
+  )
+{
+  return EFI_ACCESS_DENIED;
+}
+
+/**
+  Flush data back for the file handle.
+
+  @param  This Protocol instance pointer.
+
+  @retval EFI_SUCCESS          Data was flushed.
+  @retval EFI_UNSUPPORTED      Writes to Open directory are not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_WRITE_PROTECTED  The device is write protected.
+  @retval EFI_ACCESS_DENIED    The file was open for read only.
+  @retval EFI_VOLUME_FULL      The volume is full.
+
+**/
+EFI_STATUS
+EFIAPI
+UdfFlush (
+  IN EFI_FILE_PROTOCOL  *This
+  )
+{
+  return EFI_UNSUPPORTED;
+}
+
 STATIC
 EFI_STATUS
 FindAnchorVolumeDescriptorPointer (
@@ -50,7 +630,7 @@ FindAnchorVolumeDescriptorPointer (
     L"UdfDriverStart: Get AVDP\n"
     );
 
-  AnchorPoint = (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER *) *Buffer;
+  AnchorPoint = (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER *)*Buffer;
 
   DescriptorTag = &AnchorPoint->DescriptorTag;
 
@@ -68,14 +648,14 @@ FindAnchorVolumeDescriptorPointer (
       L"UdfDriverStart: [AVDP] Invalid Tag Identifier number\n"
       );
 
-    Status = EFI_UNSUPPORTED;
+    Status = EFI_VOLUME_CORRUPTED;
     goto FreeExit;
   }
 
   return Status;
 
 FreeExit:
-  FreePool(*Buffer);
+  FreePool (*Buffer);
   *Buffer = NULL;
 
 Exit:
@@ -121,7 +701,7 @@ StartMainVolumeDescriptorSequence (
       L"UdfDriverStart: [MVDS] Invalid length of extents\n"
       );
 
-    Status = EFI_UNSUPPORTED;
+    Status = EFI_VOLUME_CORRUPTED;
     goto Exit;
   }
 
@@ -240,19 +820,19 @@ StartMainVolumeDescriptorSequence (
     LongAd->ExtentLocation.PartitionReferenceNumber
     );
 
-  FreePool(Buffer);
+  FreePool (Buffer);
 
   return Status;
 
 FreeExit2:
-  FreePool(Buffer);
+  FreePool (Buffer);
 
 FreeExit1:
-  FreePool(*Buffer1);
+  FreePool (*Buffer1);
   *Buffer1 = NULL;
 
 FreeExit0:
-  FreePool(*Buffer0);
+  FreePool (*Buffer0);
   *Buffer0 = NULL;
 
 Exit:
@@ -300,7 +880,7 @@ FindFileSetDescriptor (
 
   Print (L"UdfDriverStart: Get FSD\n");
 
-  FileSetDesc = (UDF_FILE_SET_DESCRIPTOR *) *Buffer;
+  FileSetDesc = (UDF_FILE_SET_DESCRIPTOR *)*Buffer;
 
   DescriptorTag = &FileSetDesc->DescriptorTag;
 
@@ -320,7 +900,7 @@ FindFileSetDescriptor (
   return Status;
 
 FreeExit:
-  FreePool(*Buffer);
+  FreePool (*Buffer);
   *Buffer = NULL;
 
 Exit:
@@ -380,7 +960,7 @@ FindFileEntryRootDir (
 
   Print (L"UdfDriverStart: Get File Entry (Root Directory)\n");
 
-  FileEntry = (UDF_FILE_ENTRY *) *Buffer;
+  FileEntry = (UDF_FILE_ENTRY *)*Buffer;
 
   DescriptorTag = &FileEntry->DescriptorTag;
 
@@ -395,7 +975,7 @@ FindFileEntryRootDir (
 	L"UdfDriverStart: [ROOT] Invalid Tag Identifier number\n"
 	);
 
-      Status = EFI_UNSUPPORTED;
+      Status = EFI_VOLUME_CORRUPTED;
       goto FreeExit;
   }
 
@@ -405,7 +985,7 @@ FindFileEntryRootDir (
   if (!IS_FE_DIRECTORY (FileEntry)) {
     Print (L"UdfDriverStart: [ROOT] Root Directory is NOT a directory!\n");
 
-    Status = EFI_UNSUPPORTED;
+    Status = EFI_VOLUME_CORRUPTED;
     goto FreeExit;
   }
 
@@ -430,7 +1010,7 @@ FindFileEntryRootDir (
   return Status;
 
 FreeExit:
-  FreePool(*Buffer);
+  FreePool (*Buffer);
   *Buffer = NULL;
 
 Exit:
@@ -543,7 +1123,7 @@ FindFileIdentifierDescriptorRootDir (
 	L"UdfDriverStart: [ROOT-FID] Invalid tag identifier number\n"
 	);
 
-      Status = EFI_UNSUPPORTED;
+      Status = EFI_VOLUME_CORRUPTED;
       goto FreeExit;
   }
 
@@ -564,7 +1144,7 @@ FindFileIdentifierDescriptorRootDir (
   return Status;
 
 FreeExit:
-  FreePool(*Buffer);
+  FreePool (*Buffer);
   *Buffer = NULL;
 
 Exit:
@@ -653,21 +1233,21 @@ FindRootDirectory (
   return Status;
 
 FreeExit3:
-  FreePool((VOID *)*FileEntry);
+  FreePool ((VOID *)*FileEntry);
   *FileEntry = NULL;
 
 FreeExit2:
-  FreePool((VOID *)*FileSetDesc);
+  FreePool ((VOID *)*FileSetDesc);
   *FileSetDesc = NULL;
 
 FreeExit1:
-  FreePool((VOID *)*PartitionDesc);
-  FreePool((VOID *)*LogicalVolDesc);
+  FreePool ((VOID *)*PartitionDesc);
+  FreePool ((VOID *)*LogicalVolDesc);
   *PartitionDesc   = NULL;
   *LogicalVolDesc  = NULL;
 
 FreeExit0:
-  FreePool((VOID *)*AnchorPoint);
+  FreePool ((VOID *)*AnchorPoint);
   *AnchorPoint = NULL;
 
 Exit:
@@ -705,11 +1285,13 @@ ReadDirectory (
 
   Status = EFI_SUCCESS;
 
+  *ReadFileIdentifierDesc = NULL;
+
   //
   // Check if Parent is _really_ a directory. Otherwise, do nothing.
   //
   if (!IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc)) {
-    Status = EFI_INVALID_PARAMETER;
+    Status = EFI_NOT_FOUND;
     goto Exit;
   }
 
@@ -721,31 +1303,20 @@ ReadDirectory (
   Lsn = PartitionDesc->PartitionStartingLocation +
            LongAd->ExtentLocation.LogicalBlockNumber + 1;
 
+  //
+  // Calculate offset of the Parent FID
+  //
   ParentOffset = Lsn * BlockSize;
 
   EndingPartitionOffset =
     (PartitionDesc->PartitionStartingLocation +
      PartitionDesc->PartitionLength) * BlockSize;
 
-  //
-  // Calculate length of FID
-  //
-  FidLength = sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR) +
-                 ParentFileIdentifierDesc->LengthOfFileIdentifier +
-                 ParentFileIdentifierDesc->LengthOfImplementationUse +
-    (4 * ((ParentFileIdentifierDesc->LengthOfFileIdentifier +
-	   ParentFileIdentifierDesc->LengthOfImplementationUse + 38 + 3) / 4) -
-     (ParentFileIdentifierDesc->LengthOfFileIdentifier +
-      ParentFileIdentifierDesc->LengthOfImplementationUse + 38));
-
 #ifdef UDF_DEBUG
   Print (L"UdfDriverStart: [ReadDirectory] Parent FidLength: %d\n", FidLength);
 #endif
 
-  //
-  // Calculate offset of the FID right next to Parent FID
-  //
-  Offset = ParentOffset + FidLength;
+  Offset = ParentOffset;
 
   //
   // Make sure we don't across a partition boundary
@@ -760,8 +1331,6 @@ ReadDirectory (
     Status = EFI_OUT_OF_RESOURCES;
     goto Exit;
   }
-
-  *ReadFileIdentifierDesc = NULL;
 
   //
   // First FID to be read
@@ -893,7 +1462,7 @@ ReadNextFid:
     goto FreeExit;
   }
 
-  FileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *) Buffer;
+  FileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *)Buffer;
 
   DescriptorTag = &FileIdentifierDesc->DescriptorTag;
 
@@ -932,35 +1501,45 @@ Exit:
   return Status;
 }
 
+//
+// FIXME: The filename is not quite correct. it's displayed with some weird
+// chars. Read spec to know more about it.
+//
 EFI_STATUS
 EFIAPI
-FileIdentifierDescToFilename (
+FileIdentifierDescToFileName (
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  OUT UINT16                          **Filename
+  OUT CHAR16                          **FileName
   )
 {
   EFI_STATUS                          Status;
-  UINT16                              *FileIdentifier;
+  CHAR16                              *FileIdentifier;
 
   Status = EFI_SUCCESS;
 
-  *Filename = AllocatePool (FileIdentifierDesc->LengthOfFileIdentifier + 2);
-  if (!*Filename) {
+  *FileName = AllocatePool (
+                 FileIdentifierDesc->LengthOfFileIdentifier +
+		 sizeof (CHAR16) + 3
+                 );
+  if (!*FileName) {
     Status = EFI_OUT_OF_RESOURCES;
     goto Exit;
   }
 
-  FileIdentifier = (UINT16 *)(
+  //
+  // +2 == discards the Compression ID found in the File Identifier field
+  //
+  FileIdentifier = (CHAR16 *)(
      (UINT8 *)&FileIdentifierDesc->Data +
-     FileIdentifierDesc->LengthOfImplementationUse
+     FileIdentifierDesc->LengthOfImplementationUse + 2
      );
   CopyMem (
-    (VOID *)*Filename,
+    (VOID *)*FileName,
     (VOID *)FileIdentifier,
-    FileIdentifierDesc->LengthOfFileIdentifier + 1
+    FileIdentifierDesc->LengthOfFileIdentifier + 2
     );
 
-  (*Filename)[FileIdentifierDesc->LengthOfFileIdentifier + 1] = 0;
+  (*FileName)[FileIdentifierDesc->LengthOfFileIdentifier + 2] = '\0';
 
 Exit:
   return Status;
@@ -983,7 +1562,7 @@ ListDirectoryFids (
   EFI_STATUS                                Status;
   UDF_FILE_IDENTIFIER_DESCRIPTOR            *PrevFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR            *NextFileIdentifierDesc;
-  UINT16                                    *Filename;
+  CHAR16                                    *FileName;
 
   PrevFileIdentifierDesc = NULL;
 
@@ -1011,22 +1590,22 @@ ListDirectoryFids (
       break;
     }
 
-    Status = FileIdentifierDescToFilename (NextFileIdentifierDesc, &Filename);
+    Status = FileIdentifierDescToFileName (NextFileIdentifierDesc, &FileName);
     if (EFI_ERROR (Status)) {
       goto FreeExit;
     }
 
-    Print (L"    %s\n", Filename);
+    Print (L"    %s\n", FileName);
 
     if (PrevFileIdentifierDesc) {
-      FreePool((VOID *)PrevFileIdentifierDesc);
+      FreePool ((VOID *)PrevFileIdentifierDesc);
     }
 
     PrevFileIdentifierDesc = NextFileIdentifierDesc;
   }
 
 FreeExit:
-  FreePool((VOID *)PrevFileIdentifierDesc);
+  FreePool ((VOID *)PrevFileIdentifierDesc);
 
 Exit:
   return Status;
