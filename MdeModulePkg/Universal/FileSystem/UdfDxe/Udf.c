@@ -123,6 +123,10 @@ UdfDriverBindingStart (
   UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
   UDF_FILE_ENTRY                         *RootFileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *RootFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc0;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc1;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc2;
+  UINT16                                 *Filename;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -171,7 +175,7 @@ UdfDriverBindingStart (
   }
 
   //
-  // Logical block size for DVD ready-only disc
+  // Logical block size for DVD ready-only discs
   //
   BlockSize = 2048;
 
@@ -195,8 +199,83 @@ UdfDriverBindingStart (
 
   Print (L"UdfDriverStart: Root Directory found\n");
 
+  Status = ReadDirectory (
+                      BlockIo,
+		      DiskIo,
+		      BlockSize,
+		      AnchorPoint,
+		      PartitionDesc,
+		      LogicalVolDesc,
+		      FileSetDesc,
+		      RootFileEntry,
+		      RootFileIdentifierDesc,
+		      NULL,
+		      &FileIdentifierDesc0
+                      );
+  if (EFI_ERROR (Status)) {
+    Print (L"UdfDriverStart: Failed to read directory (%r)\n", Status);
+    goto Exit;
+  }
+
+  (VOID)FileIdentifierDescToFilename (FileIdentifierDesc0, &Filename);
+
+  Print (L"UdfDriverStart: Filename: %s\n", Filename);
+
+  Print (L"\n");
+
+  Status = ReadDirectory (
+                      BlockIo,
+		      DiskIo,
+		      BlockSize,
+		      AnchorPoint,
+		      PartitionDesc,
+		      LogicalVolDesc,
+		      FileSetDesc,
+		      RootFileEntry,
+		      RootFileIdentifierDesc,
+		      FileIdentifierDesc0,
+		      &FileIdentifierDesc1
+                      );
+  if (EFI_ERROR (Status)) {
+    Print (L"UdfDriverStart: Failed to read directory (%r)\n", Status);
+    goto Exit;
+  }
+
+  (VOID)FileIdentifierDescToFilename (FileIdentifierDesc1, &Filename);
+
+  Print (L"UdfDriverStart: Filename: %s\n", Filename);
+
+  Print (L"\n");
+
+  Status = ReadDirectory (
+                      BlockIo,
+		      DiskIo,
+		      BlockSize,
+		      AnchorPoint,
+		      PartitionDesc,
+		      LogicalVolDesc,
+		      FileSetDesc,
+		      RootFileEntry,
+		      RootFileIdentifierDesc,
+		      FileIdentifierDesc1,
+		      &FileIdentifierDesc2
+                      );
+  if (EFI_ERROR (Status)) {
+    Print (L"UdfDriverStart: Failed to read directory (%r)\n", Status);
+    goto Exit;
+  }
+
+  (VOID)FileIdentifierDescToFilename (FileIdentifierDesc2, &Filename);
+
+  Print (L"UdfDriverStart: Filename: %s\n", Filename);
+
+  Print (L"\n");
+
   Print (L"UdfDriverStart: Done (%r)\n", EFI_SUCCESS);
 
+  //
+  // FIXME: Leaking too much memory. Free all of them before exiting!
+  //
 Exit:
   gBS->RestoreTPL (OldTpl);
   return Status;
