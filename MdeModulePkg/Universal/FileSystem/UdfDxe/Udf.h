@@ -36,23 +36,40 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #define FIRST_ANCHOR_POINT_LSN                ((UINT32)0x0000000000000100UL)
 
-#define IS_ANCHOR_VOLUME_DESCRIPTOR_POINTER(_Pointer) \
+#define IS_AVDP(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 2)
-#define IS_PARTITION_DESCRIPTOR(_Pointer) \
+#define IS_PD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 5)
-#define IS_LOGICAL_VOLUME_DESCRIPTOR(_Pointer) \
+#define IS_LVD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 6)
-#define IS_FILE_SET_DESCRIPTOR(_Pointer) \
+#define IS_FSD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 256)
-#define IS_FILE_ENTRY(_Pointer) \
+#define IS_FE(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 261)
-#define IS_FILE_IDENTIFIER_DESCRIPTOR(_Pointer) \
+#define IS_FID(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 257)
 
-#define IS_FILE_ENTRY_DIRECTORY(_Pointer) \
+#define IS_FE_DIRECTORY(_Pointer) \
   (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
-#define IS_FILE_ENTRY_STANDARD_FILE(_Pointer) \
+#define IS_FE_STANDARD_FILE(_Pointer) \
   (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 5)
+
+#define HIDDEN_FILE                           (1 << 0)
+#define DIRECTORY_FILE                        (1 << 1)
+#define DELETED_FILE                          (1 << 2)
+#define PARENT_FILE                           (1 << 3)
+
+#define IS_FID_HIDDEN_FILE(_Pointer) \
+  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
+   HIDDEN_FILE)
+#define IS_FID_DIRECTORY_FILE(_Pointer) \
+  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
+   DIRECTORY_FILE)
+#define IS_FID_PARENT_FILE(_Pointer) \
+  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
+   PARENT_FILE)
+#define IS_FID_NORMAL_FILE(_Pointer) \
+  ((!IS_FID_DIRECTORY_FILE (_Pointer)) && (!IS_FID_PARENT_FILE (_Pointer)))
 
 #pragma pack(1)
 
@@ -293,7 +310,7 @@ typedef struct {
   UINT8                             LengthOfFileIdentifier;
   UDF_LONG_ALLOCATION_DESCRIPTOR    Icb;
   UINT16                            LengthOfImplementationUse;
-  UINT8                             ImplementationUse_FileIdentifier_Padding[0];
+  UINT8                             Data[0];
 } UDF_FILE_IDENTIFIER_DESCRIPTOR;
 
 //
@@ -334,7 +351,7 @@ typedef struct {
   UINT64                           UniqueId;
   UINT32                           LengthOfExtendedAttributes;
   UINT32                           LengthOfAllocationDescriptors;
-  UINT8                            EAArea[0]; // L_EA and L_AD
+  UINT8                            EaAdArea[0]; // L_EA and L_AD
 } UDF_FILE_ENTRY;
 
 //
@@ -419,6 +436,29 @@ FindRootDirectory (
   OUT UDF_FILE_SET_DESCRIPTOR                **FileSetDesc,
   OUT UDF_FILE_ENTRY                         **FileEntry,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FileIdentifierDesc
+  );
+
+EFI_STATUS
+EFIAPI
+ReadDirectory (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 BlockSize,
+  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
+  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
+  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
+  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        **ReadFileIdentifierDesc
+  );
+
+EFI_STATUS
+EFIAPI
+FileIdentifierDescToFilename (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
+  OUT UINT16                          **Filename
   );
 
 /**
