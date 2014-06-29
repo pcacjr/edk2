@@ -125,6 +125,7 @@ UdfDriverBindingStart (
 
 #define TEST_FILENAME0                    L"\\efi\\microsoft\\boot\\"
 #define TEST_FILENAME1                    L"cdboot.efi"
+#define TEST_FILENAME2                    L"xefisys.binx"
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -224,6 +225,11 @@ UdfDriverBindingStart (
   Print (L"\n");
 
   Status = Root->Open (NewRoot0, &NewRoot1, TEST_FILENAME1, 0, 0);
+  ASSERT_EFI_ERROR (Status);
+
+  Print (L"\n");
+
+  Status = Root->Open (NewRoot0, &NewRoot1, TEST_FILENAME2, 0, 0);
   ASSERT_EFI_ERROR (Status);
 
   Print (L"\n");
