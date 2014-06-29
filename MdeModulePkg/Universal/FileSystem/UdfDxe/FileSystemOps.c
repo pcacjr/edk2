@@ -1003,6 +1003,7 @@ FindFileSetDescriptor (
       Print (
 	L"UdfDriverStart: [FSD] Invalid Tag Identifier number\n"
 	);
+      Status = EFI_VOLUME_CORRUPTED;
       goto FreeExit;
   }
 
@@ -1491,6 +1492,7 @@ ReadDirectory (
 #endif
 
     if (!IS_FID (Buffer)) {
+      Status = EFI_VOLUME_CORRUPTED;
       goto FreeExit;
     }
 
@@ -1584,6 +1586,7 @@ ReadNextFid:
 #endif
 
   if (!IS_FID (FileIdentifierDesc)) {
+    Status = EFI_VOLUME_CORRUPTED;
     goto FreeExit;
   }
 
