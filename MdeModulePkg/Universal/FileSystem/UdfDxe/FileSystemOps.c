@@ -303,23 +303,16 @@ NextLookup:
 	goto FreeExit;
       }
 
-#ifdef UDF_DEBUG
       Print (
 	L"UdfOpen: ===> %s (Length: %d)\n",
 	NextFileName,
 	StrLen (NextFileName)
 	);
-#endif
 
       //
       // Check whether FID's File Identifier contains the expected filename
       //
-      if (CompareMem (
-	    (VOID *)NextFileName,
-	    (VOID *)StrAux,
-	    StrLen (StrAux)
-	    ) == 0) {
-
+      if (StrnCmp (NextFileName, StrAux, StrLen (StrAux)) == 0) {
 	Print (L"UdfOpen: Found file \'%s\'\n", Str);
 
 	ParentFileIdentifierDesc = NextFileIdentifierDesc;
