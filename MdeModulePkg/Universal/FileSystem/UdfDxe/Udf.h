@@ -441,6 +441,7 @@ typedef struct {
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   UINT32                                 BlockSize;
   EFI_FILE_PROTOCOL                      FileIo;
+  UINT64                                 FilePosition;
 } PRIVATE_UDF_FILE_DATA;
 
 #define PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE SIGNATURE_32 ('u', 'd', 'f', 's')
@@ -518,11 +519,11 @@ UdfOpenVolume (
 EFI_STATUS
 EFIAPI
 UdfOpen (
-  IN  EFI_FILE_PROTOCOL         *This,
-  OUT EFI_FILE_PROTOCOL         **NewHandle,
-  IN  CHAR16                    *FileName,
-  IN  UINT64                    OpenMode,
-  IN  UINT64                    Attributes
+  IN  EFI_FILE_PROTOCOL                  *This,
+  OUT EFI_FILE_PROTOCOL                  **NewHandle,
+  IN  CHAR16                             *FileName,
+  IN  UINT64                             OpenMode,
+  IN  UINT64                             Attributes
   );
 
 /**
@@ -558,7 +559,7 @@ UdfRead (
 EFI_STATUS
 EFIAPI
 UdfClose (
-  IN EFI_FILE_PROTOCOL  *This
+  IN EFI_FILE_PROTOCOL    *This
   );
 
 /**
@@ -632,8 +633,8 @@ UdfGetPosition (
 EFI_STATUS
 EFIAPI
 UdfSetPosition (
-  IN EFI_FILE_PROTOCOL  *This,
-  IN UINT64             Position
+  IN EFI_FILE_PROTOCOL     *This,
+  IN UINT64                Position
   );
 
 /**
