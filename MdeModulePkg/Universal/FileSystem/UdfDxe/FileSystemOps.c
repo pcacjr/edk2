@@ -99,6 +99,8 @@ UdfOpenVolume (
   PrivFileData->FileIo.SetInfo       = UdfSetInfo;
   PrivFileData->FileIo.Flush         = UdfFlush;
 
+  PrivFileData->FilePosition = 0;
+
   *Root = &PrivFileData->FileIo;
 
   gBS->RestoreTPL (OldTpl);
@@ -361,6 +363,8 @@ ReadNextFid:
     NewPrivFileData->UdfFileSystemData.FileEntry              = ParentFileEntry;
     NewPrivFileData->UdfFileSystemData.FileIdentifierDesc     = ParentFileIdentifierDesc;
 
+    NewPrivFileData->FilePosition = 0;
+
     *NewHandle = &NewPrivFileData->FileIo;
   }
 
@@ -394,9 +398,9 @@ Exit:
 EFI_STATUS
 EFIAPI
 UdfRead (
-  IN     EFI_FILE_PROTOCOL  *This,
-  IN OUT UINTN              *BufferSize,
-  OUT    VOID               *Buffer
+  IN     EFI_FILE_PROTOCOL               *This,
+  IN OUT UINTN                           *BufferSize,
+  OUT    VOID                            *Buffer
   )
 {
   return EFI_SUCCESS;
@@ -413,7 +417,7 @@ UdfRead (
 EFI_STATUS
 EFIAPI
 UdfClose (
-  IN EFI_FILE_PROTOCOL  *This
+  IN EFI_FILE_PROTOCOL    *This
   )
 {
   return EFI_SUCCESS;
@@ -473,7 +477,7 @@ UdfWrite (
   @param  Position        Byte position from the start of the file.
 
   @retval EFI_SUCCESS     Position was updated.
-  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open.
+  @retval EFI_UNSUPPORTED Seek request for directories is not valid.
 
 **/
 EFI_STATUS
@@ -483,7 +487,30 @@ UdfGetPosition (
   OUT UINT64              *Position
   )
 {
-  return EFI_SUCCESS;
+  EFI_STATUS               Status;
+  PRIVATE_UDF_FILE_DATA   *PrivFileData;
+
+  Status = EFI_SUCCESS;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  //
+  // As per UEFI spec, if the file handle is a directory, then the current file
+  // position has no meaning and the operation is not supported.
+  //
+  if (IS_FID_DIRECTORY_FILE (
+	   PrivFileData->UdfFileSystemData.FileIdentifierDesc
+	   )
+    ) {
+    Status = EFI_UNSUPPORTED;
+  } else {
+    //
+    // The file is not a directory. So, return its position.
+    //
+    *Position = PrivFileData->FilePosition;
+  }
+
+  return Status;
 }
 
 /**
@@ -499,10 +526,35 @@ UdfGetPosition (
 EFI_STATUS
 EFIAPI
 UdfSetPosition (
-  IN EFI_FILE_PROTOCOL  *This,
-  IN UINT64             Position
+  IN EFI_FILE_PROTOCOL     *This,
+  IN UINT64                Position
   )
 {
+  EFI_STATUS               Status;
+  PRIVATE_UDF_FILE_DATA   *PrivFileData;
+
+  Status = EFI_SUCCESS;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  if (IS_FID_DIRECTORY_FILE (
+	   PrivFileData->UdfFileSystemData.FileIdentifierDesc
+	   )
+    ) {
+    //
+    // If the file handle is a directory, the _only_ position that may be set is
+    // zero. This has no effect of starting the read proccess of the directory
+    // entries over.
+    //
+    if (Position != 0) {
+      Status = EFI_UNSUPPORTED;
+    } else {
+      PrivFileData->FilePosition = Position;
+    }
+  } else {
+    PrivFileData->FilePosition = Position;
+  }
+
   return EFI_SUCCESS;
 }
 
