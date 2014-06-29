@@ -171,6 +171,10 @@ UdfOpen (
   UINT32                                 BlockSize;
   BOOLEAN                                Found;
   PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
+  UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
+  UINT32                                 Lsn;
+  UINT64                                 ParentOffset;
+  VOID                                   *Buffer;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -200,7 +204,7 @@ UdfOpen (
   DiskIo      = PrivFileData->DiskIo;
   BlockSize   = PrivFileData->BlockSize;
   Found       = FALSE;
-  Status      = EFI_NOT_FOUND;
+  Buffer      = NULL;
 
   for (;;) {
 NextLookup:
@@ -210,10 +214,6 @@ NextLookup:
     // Parse FileName
     //
     if (!*FileName) {
-      if (Found) {
-	Status = EFI_SUCCESS;
-      }
-
       break;
     }
 
@@ -263,6 +263,67 @@ NextLookup:
       StrLen (StrAux)
       );
 #endif
+
+    if (StrnCmp (StrAux, L"..", 2) == 0) {
+      //
+      // Make sure we're not going to look up Parent FID from a root
+      // directory or even if the current FID is not a directory(!)
+      //
+      if ((IS_FID_PARENT_FILE (ParentFileIdentifierDesc)) ||
+	  (!IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc))) {
+	break;
+      }
+
+      //
+      // Ok, we got ".." from the filename. Find Parent FID of the current FID.
+      //
+      LongAd = &ParentFileIdentifierDesc->Icb;
+
+      //
+      // Point to the Parent FID
+      //
+      Lsn = PartitionDesc->PartitionStartingLocation +
+               LongAd->ExtentLocation.LogicalBlockNumber + 1;
+
+      //
+      // Calculate offset of the Parent FID
+      //
+      ParentOffset = Lsn * BlockSize;
+
+      if (!Buffer) {
+	Buffer = AllocatePool (BlockSize);
+	if (!Buffer) {
+	  Status = EFI_OUT_OF_RESOURCES;
+	  goto FreeExit;
+	}
+      }
+
+      //
+      // Read FID
+      //
+      Status = DiskIo->ReadDisk (
+                           DiskIo,
+			   BlockIo->Media->MediaId,
+			   ParentOffset,
+			   BlockSize,
+			   Buffer
+                           );
+      if (EFI_ERROR (Status)) {
+	FreePool (Buffer);
+	goto FreeExit;
+      }
+
+      ParentFileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *)Buffer;
+
+      if (!IS_FID (ParentFileIdentifierDesc)) {
+	FreePool (Buffer);
+	Status = EFI_VOLUME_CORRUPTED;
+	goto FreeExit;
+      }
+
+      Found = TRUE;
+      continue;
+    }
 
     //
     // Start lookup
@@ -324,7 +385,6 @@ NextLookup:
 	}
 
 	Found = TRUE;
-
 	goto NextLookup;
       }
 
@@ -366,6 +426,10 @@ ReadNextFid:
     NewPrivFileData->FilePosition = 0;
 
     *NewHandle = &NewPrivFileData->FileIo;
+
+    Status = EFI_SUCCESS;
+  } else {
+    Status = EFI_NOT_FOUND;
   }
 
 FreeExit:
@@ -1414,7 +1478,7 @@ ReadDirectory (
       goto FreeExit;
     }
 
-    FileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *) Buffer;
+    FileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *)Buffer;
 
     DescriptorTag = &FileIdentifierDesc->DescriptorTag;
 
