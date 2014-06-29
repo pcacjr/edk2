@@ -14,6 +14,9 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
+#define FILENAME_TEST \
+  L"\\efi\\microsoft\\..\\microsoft\\boot\\..\\boot\\efisys.bin"
+
 //
 // UDF filesystem driver's Global Variables.
 //
@@ -120,12 +123,8 @@ UdfDriverBindingStart (
   PRIVATE_UDF_SIMPLE_FS_DATA             *PrivFsData;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_FILE_PROTOCOL                      *Root;
-  EFI_FILE_PROTOCOL                      *NewRoot0;
-  EFI_FILE_PROTOCOL                      *NewRoot1;
+  EFI_FILE_PROTOCOL                      *NewRoot;
 
-#define TEST_FILENAME0                    L"\\efi\\microsoft\\boot\\"
-#define TEST_FILENAME1                    L"cdboot.efi"
-#define TEST_FILENAME2                    L"xefisys.binx"
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -219,17 +218,7 @@ UdfDriverBindingStart (
 
   Print (L"\n");
 
-  Status = Root->Open (Root, &NewRoot0, TEST_FILENAME0, 0, 0);
-  ASSERT_EFI_ERROR (Status);
-
-  Print (L"\n");
-
-  Status = Root->Open (NewRoot0, &NewRoot1, TEST_FILENAME1, 0, 0);
-  ASSERT_EFI_ERROR (Status);
-
-  Print (L"\n");
-
-  Status = Root->Open (NewRoot0, &NewRoot1, TEST_FILENAME2, 0, 0);
+  Status = Root->Open (Root, &NewRoot, FILENAME_TEST, 0, 0);
   ASSERT_EFI_ERROR (Status);
 
   Print (L"\n");
