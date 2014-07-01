@@ -158,8 +158,8 @@ UdfOpen (
   UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
   UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
   UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
-  UDF_FILE_ENTRY                         *ParentFileEntry;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc;
+  UDF_FILE_ENTRY                         *FileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *NextFileIdentifierDesc;
   CHAR16                                 *Str;
@@ -173,7 +173,6 @@ UdfOpen (
   PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
   UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
   UINT32                                 Lsn;
-  UINT64                                 ParentOffset;
   VOID                                   *Buffer;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
@@ -189,8 +188,8 @@ UdfOpen (
   PartitionDesc            = PrivFileData->UdfFileSystemData.PartitionDesc;
   LogicalVolDesc           = PrivFileData->UdfFileSystemData.LogicalVolDesc;
   FileSetDesc              = PrivFileData->UdfFileSystemData.FileSetDesc;
-  ParentFileEntry          = PrivFileData->UdfFileSystemData.FileEntry;
-  ParentFileIdentifierDesc = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+  FileEntry                = PrivFileData->UdfFileSystemData.FileEntry;
+  FileIdentifierDesc       = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
 
   Print (L"UdfOpen: FileName \'%s\'\n", FileName);
 
@@ -217,13 +216,13 @@ NextLookup:
       break;
     }
 
-    Offset = 0;
-
     //
     // Discard any trailing whitespaces in the beginning
     //
     for ( ; (*FileName) && (*FileName == ' '); FileName++)
       ;
+
+    Offset = 0;
 
     while ((*FileName) && (*FileName != '\\')) {
       CopyMem (
@@ -269,15 +268,15 @@ NextLookup:
       // Make sure we're not going to look up Parent FID from a root
       // directory or even if the current FID is not a directory(!)
       //
-      if ((IS_FID_PARENT_FILE (ParentFileIdentifierDesc)) ||
-	  (!IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc))) {
+      if ((IS_FID_PARENT_FILE (FileIdentifierDesc)) ||
+	  (!IS_FID_DIRECTORY_FILE (FileIdentifierDesc))) {
 	break;
       }
 
       //
       // Ok, we got ".." from the filename. Find Parent FID of the current FID.
       //
-      LongAd = &ParentFileIdentifierDesc->Icb;
+      LongAd = &FileIdentifierDesc->Icb;
 
       //
       // Point to the Parent FID
@@ -288,7 +287,7 @@ NextLookup:
       //
       // Calculate offset of the Parent FID
       //
-      ParentOffset = Lsn * BlockSize;
+      Offset = Lsn * BlockSize;
 
       if (!Buffer) {
 	Buffer = AllocatePool (BlockSize);
@@ -304,7 +303,7 @@ NextLookup:
       Status = DiskIo->ReadDisk (
                            DiskIo,
 			   BlockIo->Media->MediaId,
-			   ParentOffset,
+			   Offset,
 			   BlockSize,
 			   Buffer
                            );
@@ -313,9 +312,9 @@ NextLookup:
 	goto FreeExit;
       }
 
-      ParentFileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *)Buffer;
+      FileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *)Buffer;
 
-      if (!IS_FID (ParentFileIdentifierDesc)) {
+      if (!IS_FID (FileIdentifierDesc)) {
 	FreePool (Buffer);
 	Status = EFI_VOLUME_CORRUPTED;
 	goto FreeExit;
@@ -337,8 +336,8 @@ NextLookup:
 	    PartitionDesc,
 	    LogicalVolDesc,
 	    FileSetDesc,
-	    ParentFileEntry,
-	    ParentFileIdentifierDesc,
+	    FileEntry,
+	    FileIdentifierDesc,
 	    PrevFileIdentifierDesc,
 	    &NextFileIdentifierDesc
 	    );
@@ -378,7 +377,7 @@ NextLookup:
       if (StrnCmp (NextFileName, StrAux, StrLen (StrAux)) == 0) {
 	Print (L"UdfOpen: Found file \'%s\'\n", Str);
 
-	ParentFileIdentifierDesc = NextFileIdentifierDesc;
+	FileIdentifierDesc = NextFileIdentifierDesc;
 
 	if (PrevFileIdentifierDesc) {
 	  FreePool ((VOID *) PrevFileIdentifierDesc);
@@ -416,12 +415,53 @@ ReadNextFid:
     //
     // Set up new private filesystem metadata for the open file
     //
-    NewPrivFileData->UdfFileSystemData.AnchorPoint            = AnchorPoint;
-    NewPrivFileData->UdfFileSystemData.PartitionDesc          = PartitionDesc;
-    NewPrivFileData->UdfFileSystemData.LogicalVolDesc         = LogicalVolDesc;
-    NewPrivFileData->UdfFileSystemData.FileSetDesc            = FileSetDesc;
-    NewPrivFileData->UdfFileSystemData.FileEntry              = ParentFileEntry;
-    NewPrivFileData->UdfFileSystemData.FileIdentifierDesc     = ParentFileIdentifierDesc;
+    NewPrivFileData->UdfFileSystemData.AnchorPoint      = AnchorPoint;
+    NewPrivFileData->UdfFileSystemData.PartitionDesc    = PartitionDesc;
+    NewPrivFileData->UdfFileSystemData.LogicalVolDesc   = LogicalVolDesc;
+    NewPrivFileData->UdfFileSystemData.FileSetDesc      = FileSetDesc;
+
+    //
+    // Find FE of the FID
+    //
+    FileEntry = AllocatePool (BlockSize);
+    if (!FileEntry) {
+      Status = EFI_OUT_OF_RESOURCES;
+      goto FreeExit;
+    }
+
+    LongAd = &FileIdentifierDesc->Icb;
+
+    Lsn = PartitionDesc->PartitionStartingLocation +
+           LongAd->ExtentLocation.LogicalBlockNumber;
+
+    Offset = Lsn * BlockSize;
+
+    //
+    // Read FE
+    //
+    Status = DiskIo->ReadDisk (
+                         DiskIo,
+			 BlockIo->Media->MediaId,
+			 Offset,
+			 BlockSize,
+			 (VOID *)FileEntry
+                         );
+    if (EFI_ERROR (Status)) {
+      FreePool (FileEntry);
+      goto FreeExit;
+    }
+
+    //
+    // TODO: check if ICB Tag's flags field contain all valid bits set
+    //
+    if (!IS_FE (FileEntry)) {
+      FreePool (FileEntry);
+      Status = EFI_VOLUME_CORRUPTED;
+      goto FreeExit;
+    }
+
+    NewPrivFileData->UdfFileSystemData.FileEntry            = FileEntry;
+    NewPrivFileData->UdfFileSystemData.FileIdentifierDesc   = FileIdentifierDesc;
 
     NewPrivFileData->FilePosition = 0;
 
@@ -467,7 +507,180 @@ UdfRead (
   OUT    VOID                            *Buffer
   )
 {
-  return EFI_SUCCESS;
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+  UDF_FILE_ENTRY                         *FileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINT32                                 BlockSize;
+  UINT64                                 FilePosition;
+  INT64                                  ExtStartOffset;
+  UINT32                                 ExtLen;
+  UINT32                                 ShortAdsNo;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR        *ShortAd;
+  UINT64                                 BufferOffset;
+  UINTN                                  BytesLeft;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  if ((!This) || (!Buffer)) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Exit;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  PartitionDesc        = PrivFileData->UdfFileSystemData.PartitionDesc;
+  FileEntry            = PrivFileData->UdfFileSystemData.FileEntry;
+  FileIdentifierDesc   = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+
+  BlockIo     = PrivFileData->BlockIo;
+  DiskIo      = PrivFileData->DiskIo;
+  BlockSize   = PrivFileData->BlockSize;
+
+  if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+    //
+    // Check if the current position is beyond the EOF
+    //
+    if (PrivFileData->FilePosition >= FileEntry->InformationLength) {
+      Status = EFI_DEVICE_ERROR;
+      goto Exit;
+    }
+
+    //
+    // File Type should be 5 for a standard byte addressable file
+    //
+    if (FileEntry->IcbTag.FileType != 5) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // The Type of Allocation Descriptor (bit 0-2) in Flags field of ICB Tag
+    // shall be set to 0 which means that Short Allocation Descriptors are used.
+    //
+    if (FileEntry->IcbTag.Flags & 0x07) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // Strategy Type of 4 is the only supported
+    //
+    if (FileEntry->IcbTag.StrategyType != 4) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // OK, now read file's extents to find recorded data.
+    //
+    ShortAdsNo = FileEntry->LengthOfAllocationDescriptors /
+                 sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
+
+    //
+    // NOTE: The total length of a File Entry shall not exceed the size of one
+    // logical block, so it's OK.
+    //
+    ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)(
+                            (UINT8 *)&FileEntry->Data +
+			    FileEntry->LengthOfExtendedAttributes
+                            );
+
+    ExtStartOffset   = 0;
+    ExtLen           = 0;
+
+    if (!PrivFileData->FilePosition) {
+      //
+      // OK. Start reading file from its first extent.
+      //
+      goto ReadFile;
+    }
+
+    //
+    // Find extent which corresponds to the current file's position
+    //
+    FilePosition     = 0;
+
+    do {
+      if (FilePosition + ShortAd->ExtentLength == PrivFileData->FilePosition) {
+	break;
+      }
+
+      if (FilePosition + ShortAd->ExtentLength > PrivFileData->FilePosition) {
+	ExtStartOffset =
+	  ShortAd->ExtentLength - ((FilePosition +
+				    ShortAd->ExtentLength) -
+				   PrivFileData->FilePosition);
+	if (ExtStartOffset < 0) {
+	  ExtStartOffset = -(ExtStartOffset);
+	}
+
+	ExtLen = ExtStartOffset;
+	break;
+      }
+
+      FilePosition += ShortAd->ExtentLength;
+    } while (--ShortAdsNo);
+
+    if (!ShortAdsNo) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+ReadFile:
+    //
+    // Found file position through the extents. Now, start reading file.
+    //
+    BufferOffset   = 0;
+    BytesLeft      = *BufferSize;
+
+    while ((ShortAdsNo--) && (BytesLeft)) {
+      if (ShortAd->ExtentLength > BytesLeft) {
+	//
+	// Truncate it in case of reading beyond the EOF
+	//
+	BytesLeft = ShortAd->ExtentLength;
+      }
+
+      Status = DiskIo->ReadDisk (
+	                   DiskIo,
+			   BlockIo->Media->MediaId,
+			   ExtStartOffset +
+			   ((PartitionDesc->PartitionStartingLocation +
+			     ShortAd->ExtentPosition) * BlockSize),
+			   ShortAd->ExtentLength - ExtLen,
+			   (VOID *)((UINT8 *)Buffer + BufferOffset)
+	                   );
+      if (EFI_ERROR (Status)) {
+	Status = EFI_DEVICE_ERROR;
+	goto Exit;
+      }
+
+      BytesLeft                    -= ShortAd->ExtentLength - ExtLen;
+      BufferOffset                 += ShortAd->ExtentLength - ExtLen;
+      PrivFileData->FilePosition   += ShortAd->ExtentLength - ExtLen;
+      ExtStartOffset               = 0;
+      ExtLen                       = 0;
+    }
+
+    *BufferSize = BufferOffset;
+    Status = EFI_SUCCESS;
+  } else if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+    Status = EFI_SUCCESS;
+  } else if (IS_FID_DELETED_FILE (FileIdentifierDesc)) {
+    Status = EFI_DEVICE_ERROR;
+  } else {
+    Status = EFI_VOLUME_CORRUPTED;
+  }
+
+Exit:
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
 }
 
 /**
