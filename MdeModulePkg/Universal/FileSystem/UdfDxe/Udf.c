@@ -14,8 +14,12 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
+#if 0
 #define FILENAME_TEST \
   L"\\efi\\microsoft\\..\\microsoft\\boot\\..\\boot\\efisys.bin"
+#endif
+
+#define FILENAME_TEST L"\\autorun.inf"
 
 //
 // UDF filesystem driver's Global Variables.
@@ -124,7 +128,7 @@ UdfDriverBindingStart (
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_FILE_PROTOCOL                      *Root;
   EFI_FILE_PROTOCOL                      *NewRoot;
-
+  CHAR8                                  Buffer[2048] = { 0 };
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -221,7 +225,19 @@ UdfDriverBindingStart (
   Status = Root->Open (Root, &NewRoot, FILENAME_TEST, 0, 0);
   ASSERT_EFI_ERROR (Status);
 
-  Print (L"\n");
+  Status = NewRoot->SetPosition (NewRoot, 0);
+  ASSERT_EFI_ERROR (Status);
+
+  Status = NewRoot->Read (NewRoot, (UINTN *)&BlockSize, (VOID *)&Buffer);
+  ASSERT_EFI_ERROR (Status);
+
+  Buffer[BlockSize] = '\0';
+
+  Print (L"File data:\n");
+  Print (L"%a", Buffer);
+
+  Print (L"BufferSize: %d\n", BlockSize);
+
 #endif
 #if 0
   Print (L"UdfDriverStart: Defaulting to logical block size of 2048\n");

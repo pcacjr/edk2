@@ -62,6 +62,9 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #define IS_FID_DIRECTORY_FILE(_Pointer) \
   (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
    DIRECTORY_FILE)
+#define IS_FID_DELETED_FILE(_Pointer) \
+  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
+   DELETED_FILE)
 #define IS_FID_PARENT_FILE(_Pointer) \
   (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
    PARENT_FILE)
@@ -348,7 +351,7 @@ typedef struct {
   UINT64                           UniqueId;
   UINT32                           LengthOfExtendedAttributes;
   UINT32                           LengthOfAllocationDescriptors;
-  UINT8                            EaAdArea[0]; // L_EA and L_AD
+  UINT8                            Data[0]; // L_EA and L_AD
 } UDF_FILE_ENTRY;
 
 //
