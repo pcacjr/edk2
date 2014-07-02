@@ -636,8 +636,8 @@ UdfGetPosition (
 EFI_STATUS
 EFIAPI
 UdfSetPosition (
-  IN EFI_FILE_PROTOCOL     *This,
-  IN UINT64                Position
+  IN EFI_FILE_PROTOCOL             *This,
+  IN UINT64                        Position
   );
 
 /**

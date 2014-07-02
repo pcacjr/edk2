@@ -803,21 +803,23 @@ UdfGetPosition (
 EFI_STATUS
 EFIAPI
 UdfSetPosition (
-  IN EFI_FILE_PROTOCOL     *This,
-  IN UINT64                Position
+  IN EFI_FILE_PROTOCOL             *This,
+  IN UINT64                        Position
   )
 {
-  EFI_STATUS               Status;
-  PRIVATE_UDF_FILE_DATA   *PrivFileData;
+  EFI_STATUS                       Status;
+  PRIVATE_UDF_FILE_DATA            *PrivFileData;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc;
+  UDF_FILE_ENTRY                   *FileEntry;
 
   Status = EFI_SUCCESS;
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  if (IS_FID_DIRECTORY_FILE (
-	   PrivFileData->UdfFileSystemData.FileIdentifierDesc
-	   )
-    ) {
+  FileIdentifierDesc = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+  FileEntry          = PrivFileData->UdfFileSystemData.FileEntry;
+
+  if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
     //
     // If the file handle is a directory, the _only_ position that may be set is
     // zero. This has no effect of starting the read proccess of the directory
@@ -828,8 +830,18 @@ UdfSetPosition (
     } else {
       PrivFileData->FilePosition = Position;
     }
+  } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+    //
+    // Seeking to position 0xFFFFFFFFFFFFFFFF causes the current position to be
+    // set to the EOF.
+    //
+    if (Position == 0xFFFFFFFFFFFFFFFF) {
+      PrivFileData->FilePosition = FileEntry->InformationLength - 1;
+    } else {
+      PrivFileData->FilePosition = Position;
+    }
   } else {
-    PrivFileData->FilePosition = Position;
+    Status = EFI_UNSUPPORTED;
   }
 
   return EFI_SUCCESS;
