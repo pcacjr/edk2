@@ -19,7 +19,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   L"\\efi\\microsoft\\..\\microsoft\\boot\\..\\boot\\efisys.bin"
 #endif
 
-#define FILENAME_TEST L"\\autorun.inf"
+#define FILENAME_TEST L"\\efi\\microsoft\\boot"
 
 //
 // UDF filesystem driver's Global Variables.
@@ -128,9 +128,13 @@ UdfDriverBindingStart (
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_FILE_PROTOCOL                      *Root;
   EFI_FILE_PROTOCOL                      *NewRoot;
-  CHAR8                                  Buffer[2048] = { 0 };
+  CHAR8                                  Buffer[2048];
+  //EFI_FILE_INFO                          *FileInfo;
+  EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  ZeroMem ((VOID *)&Buffer, 2048);
 
   Status = gBS->OpenProtocol (
                   ControllerHandle,
@@ -214,7 +218,6 @@ UdfDriverBindingStart (
     goto Exit;
   }
 
-#if 1
   SimpleFs = &PrivFsData->SimpleFs;
 
   Status = SimpleFs->OpenVolume (SimpleFs, &Root);
@@ -228,58 +231,29 @@ UdfDriverBindingStart (
   Status = NewRoot->SetPosition (NewRoot, 0);
   ASSERT_EFI_ERROR (Status);
 
-  Status = NewRoot->Read (NewRoot, (UINTN *)&BlockSize, (VOID *)&Buffer);
+  //Status = NewRoot->Read (NewRoot, (UINTN *)&BlockSize, (VOID *)&Buffer);
+  //ASSERT_EFI_ERROR (Status);
+
+  //Buffer[BlockSize] = '\0';
+
+  //Print (L"File data:\n");
+  //Print (L"%a", Buffer);
+
+  //Print (L"BufferSize: %d\n", BlockSize);
+
+  Status = NewRoot->GetInfo (
+                         NewRoot,
+			 //&gEfiFileInfoGuid,
+			 &gEfiFileSystemInfoGuid,
+			 (UINTN *)&BlockSize,
+			 (VOID *)&Buffer
+                         );
   ASSERT_EFI_ERROR (Status);
 
-  Buffer[BlockSize] = '\0';
+  FileSystemInfo = (EFI_FILE_SYSTEM_INFO *)&Buffer;
 
-  Print (L"File data:\n");
-  Print (L"%a", Buffer);
+  Print (L"Volume Label: %s\n", FileSystemInfo->VolumeLabel);
 
-  Print (L"BufferSize: %d\n", BlockSize);
-
-#endif
-#if 0
-  Print (L"UdfDriverStart: Defaulting to logical block size of 2048\n");
-
-  Status = FindRootDirectory (
-                          BlockIo,
-                          DiskIo,
-			  BlockSize,
-			  &AnchorPoint,
-			  &PartitionDesc,
-			  &LogicalVolDesc,
-			  &FileSetDesc,
-			  &RootFileEntry,
-			  &RootFileIdentifierDesc
-                          );
-  if (EFI_ERROR (Status)) {
-    Print (L"UdfDriverStart: Failed to find Root Directory (%r)\n", Status);
-    goto Exit;
-  }
-
-  Print (L"UdfDriverStart: Root Directory found\n");
-
-  Print (L"\n");
-
-  Status = ListDirectoryFids (
-                          BlockIo,
-			  DiskIo,
-			  BlockSize,
-			  AnchorPoint,
-			  PartitionDesc,
-			  LogicalVolDesc,
-			  FileSetDesc,
-			  RootFileEntry,
-			  RootFileIdentifierDesc
-                          );
-  if (EFI_ERROR (Status)) {
-    Print (L"UdfDriverStart: Failed to list directory FIDs (%r)\n", Status);
-    goto Exit;
-  }
-
-  Print (L"\n");
-#endif
   //
   // FIXME: Leaking too much memory. Free all of them before exiting!
   //

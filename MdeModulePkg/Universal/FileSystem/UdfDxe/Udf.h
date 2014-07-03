@@ -16,12 +16,18 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #define _UDF_H_
 
 #include <Uefi.h>
+
 #include <Protocol/BlockIo.h>
 #include <Protocol/ComponentName.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/DriverBinding.h>
 #include <Protocol/DiskIo.h>
 #include <Protocol/SimpleFileSystem.h>
+
+#include <Guid/FileInfo.h>
+#include <Guid/FileSystemInfo.h>
+#include <Guid/FileSystemVolumeLabelInfo.h>
+
 #include <Library/DebugLib.h>
 #include <Library/UefiDriverEntryPoint.h>
 #include <Library/BaseLib.h>
@@ -32,7 +38,10 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/DevicePathLib.h>
 
 #define FIRST_ANCHOR_POINT_LSN                ((UINT32)0x0000000000000100UL)
+#define PRIMARY_VOLUME_DESCRIPTOR_LSN         ((UINT32)0x0000000000000010UL)
 
+#define IS_PVD(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 1)
 #define IS_AVDP(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 2)
 #define IS_PD(_Pointer) \
@@ -719,7 +728,7 @@ EFIAPI
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UINT32                                  BlockSize,
+  IN OUT UINT32                              *BlockSize,
   OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   **AnchorPoint,
   OUT UDF_PARTITION_DESCRIPTOR               **PartitionDesc,
   OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          **LogicalVolDesc,
@@ -734,11 +743,7 @@ ReadDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
   IN UINT32                                 BlockSize,
-  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
-  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
-  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        **ReadFileIdentifierDesc
@@ -757,12 +762,19 @@ ListDirectoryFids (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
   IN UINT32                                 BlockSize,
-  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
-  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
-  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc
+  );
+
+EFI_STATUS
+EFIAPI
+GetDirectorySize (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 BlockSize,
+  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
+  OUT UINT64                                *Size
   );
 
 /**
