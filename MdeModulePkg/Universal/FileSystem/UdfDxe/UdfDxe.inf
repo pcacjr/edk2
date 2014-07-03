@@ -55,7 +55,8 @@
 [Guids]
   gEfiPartTypeUnusedGuid                        ## SOMETIMES_CONSUMES ## GUID
   gEfiPartTypeSystemPartGuid                    ## SOMETIMES_CONSUMES ## Protocol
-
+  gEfiFileInfoGuid                              ## SOMETIMES_CONSUMES ## GUID
+  gEfiFileSystemInfoGuid                        ## SOMETIMES_CONSUMES ## GUID
 
 [Protocols]
   gEfiBlockIoProtocolGuid                       ## BY_START

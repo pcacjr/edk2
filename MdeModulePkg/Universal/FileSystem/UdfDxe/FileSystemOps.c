@@ -14,7 +14,18 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
-//#define UDF_DEBUG
+//
+// OSTA CS0 Character Set
+//
+// The below byte values represent the following ASCII string:
+//        "OSTA Compressed Unicode"
+//
+// Note also that the byte values are stored in litte-endian.
+//
+UINT8 gOstaCs0CharSetInfo[] = {
+  0x65, 0x64, 0x6F, 0x63, 0x69, 0x6E, 0x55, 0x20, 0x64, 0x65, 0x73, 0x73, 0x65,
+  0x72, 0x70, 0x6D, 0x6F, 0x43, 0x20, 0x41, 0x54, 0x53, 0x4F,
+};
 
 /**
   Open the root directory on a volume.
@@ -56,7 +67,7 @@ UdfOpenVolume (
   Status = FindRootDirectory (
                           PrivFsData->BlockIo,
                           PrivFsData->DiskIo,
-			  PrivFsData->BlockSize,
+			  &PrivFsData->BlockSize,
 			  &AnchorPoint,
 			  &PartitionDesc,
 			  &LogicalVolDesc,
@@ -154,10 +165,7 @@ UdfOpen (
   EFI_TPL                                OldTpl;
   EFI_STATUS                             Status;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
   UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
-  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
-  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
   UDF_FILE_ENTRY                         *FileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc;
@@ -184,11 +192,7 @@ UdfOpen (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  AnchorPoint              = PrivFileData->UdfFileSystemData.AnchorPoint;
   PartitionDesc            = PrivFileData->UdfFileSystemData.PartitionDesc;
-  LogicalVolDesc           = PrivFileData->UdfFileSystemData.LogicalVolDesc;
-  FileSetDesc              = PrivFileData->UdfFileSystemData.FileSetDesc;
-  FileEntry                = PrivFileData->UdfFileSystemData.FileEntry;
   FileIdentifierDesc       = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
 
   Print (L"UdfOpen: FileName \'%s\'\n", FileName);
@@ -332,11 +336,7 @@ NextLookup:
 	    BlockIo,
 	    DiskIo,
 	    BlockSize,
-	    AnchorPoint,
 	    PartitionDesc,
-	    LogicalVolDesc,
-	    FileSetDesc,
-	    FileEntry,
 	    FileIdentifierDesc,
 	    PrevFileIdentifierDesc,
 	    &NextFileIdentifierDesc
@@ -413,14 +413,6 @@ ReadNextFid:
       );
 
     //
-    // Set up new private filesystem metadata for the open file
-    //
-    NewPrivFileData->UdfFileSystemData.AnchorPoint      = AnchorPoint;
-    NewPrivFileData->UdfFileSystemData.PartitionDesc    = PartitionDesc;
-    NewPrivFileData->UdfFileSystemData.LogicalVolDesc   = LogicalVolDesc;
-    NewPrivFileData->UdfFileSystemData.FileSetDesc      = FileSetDesc;
-
-    //
     // Find FE of the FID
     //
     FileEntry = AllocatePool (BlockSize);
@@ -460,8 +452,8 @@ ReadNextFid:
       goto FreeExit;
     }
 
-    NewPrivFileData->UdfFileSystemData.FileEntry            = FileEntry;
-    NewPrivFileData->UdfFileSystemData.FileIdentifierDesc   = FileIdentifierDesc;
+    NewPrivFileData->UdfFileSystemData.FileEntry          = FileEntry;
+    NewPrivFileData->UdfFileSystemData.FileIdentifierDesc = FileIdentifierDesc;
 
     NewPrivFileData->FilePosition = 0;
 
@@ -868,13 +860,206 @@ UdfSetPosition (
 EFI_STATUS
 EFIAPI
 UdfGetInfo (
-  IN     EFI_FILE_PROTOCOL  *This,
-  IN     EFI_GUID           *InformationType,
-  IN OUT UINTN              *BufferSize,
-  OUT    VOID               *Buffer
+  IN     EFI_FILE_PROTOCOL               *This,
+  IN     EFI_GUID                        *InformationType,
+  IN OUT UINTN                           *BufferSize,
+  OUT    VOID                            *Buffer
   )
 {
-  return EFI_ACCESS_DENIED;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UDF_FILE_ENTRY                         *FileEntry;
+  EFI_FILE_INFO                          *FileInfo;
+  CHAR16                                 *FileName;
+  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINT32                                 BlockSize;
+  UINT64                                 FileSize;
+  UINTN                                  FileInfoLength;
+  EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
+  UDF_CHAR_SPEC                          *CharSpec;
+  UINTN                                  FileSystemInfoLength;
+  CHAR16                                 *String;
+  CHAR16                                 *CharP;
+  UINTN                                  Index;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  PartitionDesc            = PrivFileData->UdfFileSystemData.PartitionDesc;
+  LogicalVolDesc           = PrivFileData->UdfFileSystemData.LogicalVolDesc;
+  FileEntry                = PrivFileData->UdfFileSystemData.FileEntry;
+  FileIdentifierDesc       = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+
+  BlockIo     = PrivFileData->BlockIo;
+  DiskIo      = PrivFileData->DiskIo;
+  BlockSize   = PrivFileData->BlockSize;
+
+  if (CompareGuid (InformationType, &gEfiFileInfoGuid)) {
+    Status = FileIdentifierDescToFileName (FileIdentifierDesc, &FileName);
+    if (EFI_ERROR (Status)) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // Check if BufferSize is too small to read the current directory entry
+    //
+    FileInfoLength = sizeof (EFI_FILE_INFO) + StrLen (FileName) + 1;
+    if (*BufferSize < FileInfoLength) {
+      *BufferSize = FileInfoLength;
+      Status = EFI_BUFFER_TOO_SMALL;
+      goto Exit;
+    }
+
+    ZeroMem (Buffer, FileInfoLength);
+
+    FileInfo = (EFI_FILE_INFO *) Buffer;
+
+    FileInfo->Size = FileInfoLength;
+
+    FileInfo->Attribute |= EFI_FILE_READ_ONLY;
+
+    if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+      Status = GetDirectorySize (
+                             BlockIo,
+			     DiskIo,
+			     BlockSize,
+			     PartitionDesc,
+			     FileIdentifierDesc,
+			     &FileSize
+			     );
+      if (EFI_ERROR (Status)) {
+	goto Exit;
+      }
+
+      FileInfo->Attribute |= EFI_FILE_DIRECTORY;
+    } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+      FileSize = FileEntry->InformationLength;
+      FileInfo->Attribute |= EFI_FILE_ARCHIVE;
+    }
+
+    if (IS_FID_HIDDEN_FILE (FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_HIDDEN;
+    }
+
+    //
+    // Check if file has System bit set (bit 10)
+    //
+    if (FileEntry->IcbTag.Flags & (1 << 10)) {
+      FileInfo->Attribute |= EFI_FILE_SYSTEM;
+    }
+
+    FileInfo->FileSize = FileSize;
+
+    FileInfo->PhysicalSize = FileEntry->InformationLength;
+
+    FileInfo->CreateTime.Year         = FileEntry->AccessTime.Year;
+    FileInfo->CreateTime.Month        = FileEntry->AccessTime.Month;
+    FileInfo->CreateTime.Day          = FileEntry->AccessTime.Day;
+    FileInfo->CreateTime.Hour         = FileEntry->AccessTime.Hour;
+    FileInfo->CreateTime.Minute       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Second       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Nanosecond   =
+         FileEntry->AccessTime.HundredsOfMicroseconds;
+
+    //
+    // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
+    // structures should be interpreted as Local Time. Use
+    // EFI_UNSPECIFIED_TIMEZONE for Local Time.
+    //
+    FileInfo->CreateTime.TimeZone   = EFI_UNSPECIFIED_TIMEZONE;
+    FileInfo->CreateTime.Daylight   = EFI_TIME_ADJUST_DAYLIGHT;
+
+    //
+    // As per ECMA-167 specification, the Modification Time should be identical
+    // to the content of the Access Time field.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->ModificationTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    //
+    // Since we're accessing a DVD read-only disc - the Last Access Time
+    // field, obviously, should be the same as Create Time.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->LastAccessTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    CopyMem ((VOID *)&FileInfo->FileName, (VOID *)FileName, StrLen (FileName));
+
+    FileInfo->FileName[StrLen (FileName)] = '\0';
+
+    *BufferSize = FileInfoLength;
+    Status = EFI_SUCCESS;
+  } else if (CompareGuid (InformationType, &gEfiFileSystemInfoGuid)) {
+    //
+    // Logical Volume Identifier field is 128 bytes long
+    //
+    FileSystemInfoLength = 128 + sizeof (EFI_FILE_SYSTEM);
+
+    if (*BufferSize < FileSystemInfoLength) {
+      *BufferSize = FileSystemInfoLength;
+      Status = EFI_BUFFER_TOO_SMALL;
+      goto Exit;
+    }
+
+    FileSystemInfo = (EFI_FILE_SYSTEM_INFO *)Buffer;
+
+    //
+    // The encoding character set should be in "OSTA CS0". See OSTA UDF 2.1.2.
+    //
+    CharSpec = &LogicalVolDesc->DescriptorCharacterSet;
+
+    if ((CharSpec->CharacterSetType != 0) ||
+	(!CompareMem (
+	     (VOID *)&CharSpec->CharacterSetInfo,
+	     (VOID *)&gOstaCs0CharSetInfo,
+	     sizeof (gOstaCs0CharSetInfo)
+	     )
+	)
+      )
+    {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    String = (CHAR16 *)&FileSystemInfo->VolumeLabel[0];
+
+    for (Index = 0; Index < 128; Index += 2) {
+      CharP = (CHAR16 *)&LogicalVolDesc->LogicalVolumeIdentifier[Index];
+      if (!*CharP) {
+	break;
+      }
+
+      *String++ = *CharP;
+    }
+
+    *String = '\0';
+
+    FileSystemInfo->Size        = FileSystemInfoLength;
+    FileSystemInfo->ReadOnly    = (BOOLEAN)(PartitionDesc->AccessType == 1);
+    FileSystemInfo->VolumeSize  =
+         (PartitionDesc->PartitionStartingLocation +
+	  PartitionDesc->PartitionLength) * BlockSize;
+    FileSystemInfo->FreeSpace   = 0;
+    FileSystemInfo->BlockSize   = BlockSize;
+
+    *BufferSize = FileSystemInfoLength;
+    Status = EFI_SUCCESS;
+  } else {
+    Status = EFI_UNSUPPORTED;
+  }
+
+Exit:
+  return Status;
 }
 
 /**
@@ -1491,7 +1676,7 @@ EFIAPI
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UINT32                                  BlockSize,
+  IN OUT UINT32                              *BlockSize,
   OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   **AnchorPoint,
   OUT UDF_PARTITION_DESCRIPTOR               **PartitionDesc,
   OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          **LogicalVolDesc,
@@ -1509,7 +1694,7 @@ FindRootDirectory (
   Status = FindAnchorVolumeDescriptorPointer (
                                           BlockIo,
 					  DiskIo,
-					  BlockSize,
+					  *BlockSize,
 					  (VOID **)AnchorPoint
                                           );
   if (EFI_ERROR (Status)) {
@@ -1519,7 +1704,7 @@ FindRootDirectory (
   Status = StartMainVolumeDescriptorSequence (
                                           BlockIo,
 					  DiskIo,
-					  BlockSize,
+					  *BlockSize,
 					  *AnchorPoint,
 					  (VOID **)PartitionDesc,
 					  (VOID **)LogicalVolDesc
@@ -1528,10 +1713,12 @@ FindRootDirectory (
     goto FreeExit0;
   }
 
+  *BlockSize = (*LogicalVolDesc)->LogicalBlockSize;
+
   Status = FindFileSetDescriptor (
                               BlockIo,
 			      DiskIo,
-			      BlockSize,
+			      *BlockSize,
 			      *PartitionDesc,
 			      *LogicalVolDesc,
 			      (VOID **)FileSetDesc
@@ -1543,7 +1730,7 @@ FindRootDirectory (
   Status = FindFileEntryRootDir (
                              BlockIo,
 			     DiskIo,
-			     BlockSize,
+			     *BlockSize,
 			     *PartitionDesc,
 			     *FileSetDesc,
 			     (VOID **)FileEntry
@@ -1555,7 +1742,7 @@ FindRootDirectory (
   Status = FindFileIdentifierDescriptorRootDir (
                                             BlockIo,
 					    DiskIo,
-					    BlockSize,
+					    *BlockSize,
 					    *PartitionDesc,
 					    *FileSetDesc,
 					    *FileEntry,
@@ -1595,11 +1782,7 @@ ReadDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
   IN UINT32                                 BlockSize,
-  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
-  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
-  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        **ReadFileIdentifierDesc
@@ -1646,10 +1829,6 @@ ReadDirectory (
   EndingPartitionOffset =
     (PartitionDesc->PartitionStartingLocation +
      PartitionDesc->PartitionLength) * BlockSize;
-
-#ifdef UDF_DEBUG
-  Print (L"UdfDriverStart: [ReadDirectory] Parent FidLength: %d\n", FidLength);
-#endif
 
   Offset = ParentOffset;
 
@@ -1717,7 +1896,6 @@ ReadDirectory (
 #endif
 
     if (!IS_FID (Buffer)) {
-      Status = EFI_VOLUME_CORRUPTED;
       goto FreeExit;
     }
 
@@ -1811,7 +1989,6 @@ ReadNextFid:
 #endif
 
   if (!IS_FID (FileIdentifierDesc)) {
-    Status = EFI_VOLUME_CORRUPTED;
     goto FreeExit;
   }
 
@@ -1888,11 +2065,7 @@ ListDirectoryFids (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
   IN UINT32                                 BlockSize,
-  IN UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint               OPTIONAL,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc            OPTIONAL,
-  IN UDF_FILE_SET_DESCRIPTOR                *FileSetDesc               OPTIONAL,
-  IN UDF_FILE_ENTRY                         *ParentFileEntry           OPTIONAL,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc
   )
 {
@@ -1910,11 +2083,7 @@ ListDirectoryFids (
                         BlockIo,
 			DiskIo,
 			BlockSize,
-			AnchorPoint,
 		        PartitionDesc,
-		        LogicalVolDesc,
-		        FileSetDesc,
-		        ParentFileEntry,
 		        ParentFileIdentifierDesc,
 			PrevFileIdentifierDesc,
 		        &NextFileIdentifierDesc
@@ -1942,6 +2111,105 @@ ListDirectoryFids (
   }
 
 FreeExit:
+  FreePool ((VOID *)PrevFileIdentifierDesc);
+
+Exit:
+  return Status;
+}
+
+EFI_STATUS
+EFIAPI
+GetDirectorySize (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 BlockSize,
+  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
+  OUT UINT64                                *Size
+  )
+{
+  EFI_STATUS                                Status;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR            *PrevFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR            *NextFileIdentifierDesc;
+  UDF_FILE_ENTRY                            *FileEntry;
+  UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
+  UINT32                                    Lsn;
+  UINT64                                    Offset;
+
+  FileEntry = AllocatePool (BlockSize);
+  if (!FileEntry) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Exit;
+  }
+
+  PrevFileIdentifierDesc   = NULL;
+  *Size                    = 0;
+
+  for (;;) {
+    Status = ReadDirectory (
+                        BlockIo,
+			DiskIo,
+			BlockSize,
+		        PartitionDesc,
+		        ParentFileIdentifierDesc,
+			PrevFileIdentifierDesc,
+		        &NextFileIdentifierDesc
+			);
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+
+    if (!NextFileIdentifierDesc) {
+      break;
+    }
+
+    if (IS_FID_PARENT_FILE (NextFileIdentifierDesc)) {
+      goto ReadNextFid;
+    }
+
+    LongAd = &NextFileIdentifierDesc->Icb;
+
+    Lsn = PartitionDesc->PartitionStartingLocation +
+           LongAd->ExtentLocation.LogicalBlockNumber;
+
+    Offset = Lsn * BlockSize;
+
+    //
+    // Read FE
+    //
+    Status = DiskIo->ReadDisk (
+                         DiskIo,
+			 BlockIo->Media->MediaId,
+			 Offset,
+			 BlockSize,
+			 (VOID *)FileEntry
+                         );
+    if (EFI_ERROR (Status)) {
+      FreePool (FileEntry);
+      goto FreeExit;
+    }
+
+    //
+    // TODO: check if ICB Tag's flags field contain all valid bits set
+    //
+    if (!IS_FE (FileEntry)) {
+      FreePool (FileEntry);
+      Status = EFI_VOLUME_CORRUPTED;
+      goto FreeExit;
+    }
+
+    *Size += FileEntry->InformationLength;
+
+ReadNextFid:
+    if (PrevFileIdentifierDesc) {
+      FreePool ((VOID *)PrevFileIdentifierDesc);
+    }
+
+    PrevFileIdentifierDesc = NextFileIdentifierDesc;
+  }
+
+FreeExit:
+  FreePool ((VOID *)FileEntry);
   FreePool ((VOID *)PrevFileIdentifierDesc);
 
 Exit:
