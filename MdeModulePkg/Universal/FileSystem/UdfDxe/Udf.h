@@ -758,16 +758,6 @@ FileIdentifierDescToFileName (
 
 EFI_STATUS
 EFIAPI
-ListDirectoryFids (
-  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UINT32                                 BlockSize,
-  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc
-  );
-
-EFI_STATUS
-EFIAPI
 GetDirectorySize (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
