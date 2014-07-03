@@ -19,7 +19,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   L"\\efi\\microsoft\\..\\microsoft\\boot\\..\\boot\\efisys.bin"
 #endif
 
-#define FILENAME_TEST L"\\efi\\microsoft\\boot"
+#define FILENAME_TEST L"\\efi\\microsoft\\boot\\fonts"
 
 //
 // UDF filesystem driver's Global Variables.
@@ -129,7 +129,7 @@ UdfDriverBindingStart (
   EFI_FILE_PROTOCOL                      *Root;
   EFI_FILE_PROTOCOL                      *NewRoot;
   CHAR8                                  Buffer[2048];
-  //EFI_FILE_INFO                          *FileInfo;
+  EFI_FILE_INFO                          *FileInfo;
   EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
@@ -253,6 +253,18 @@ UdfDriverBindingStart (
   FileSystemInfo = (EFI_FILE_SYSTEM_INFO *)&Buffer;
 
   Print (L"Volume Label: %s\n", FileSystemInfo->VolumeLabel);
+
+  for (;;) {
+    Status = NewRoot->Read (NewRoot, (UINTN *)&BlockSize, (VOID *)&Buffer);
+    if (!BlockSize) {
+      break;
+    } else {
+      if (!EFI_ERROR (Status)) {
+	FileInfo = (EFI_FILE_INFO *)&Buffer;
+	Print (L"Filename: %s\n", FileInfo->FileName);
+      }
+    }
+  }
 
   //
   // FIXME: Leaking too much memory. Free all of them before exiting!

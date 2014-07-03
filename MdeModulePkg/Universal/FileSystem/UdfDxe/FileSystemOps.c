@@ -203,15 +203,21 @@ UdfOpen (
     goto Exit;
   }
 
-  BlockIo     = PrivFileData->BlockIo;
-  DiskIo      = PrivFileData->DiskIo;
-  BlockSize   = PrivFileData->BlockSize;
-  Found       = FALSE;
-  Buffer      = NULL;
+  BlockIo        = PrivFileData->BlockIo;
+  DiskIo         = PrivFileData->DiskIo;
+  BlockSize      = PrivFileData->BlockSize;
+  Found          = FALSE;
+  Buffer         = NULL;
+  NextFileName   = NULL;
 
   for (;;) {
 NextLookup:
     PrevFileIdentifierDesc = NULL;
+
+    if (NextFileName) {
+      FreePool ((VOID *)NextFileName);
+      NextFileName = NULL;
+    }
 
     //
     // Parse FileName
@@ -515,6 +521,13 @@ UdfRead (
   UDF_SHORT_ALLOCATION_DESCRIPTOR        *ShortAd;
   UINT64                                 BufferOffset;
   UINTN                                  BytesLeft;
+  UINTN                                  DirsCount;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *NextFileIdentifierDesc;
+  UINTN                                  FileInfoLength;
+  EFI_FILE_INFO                          *FileInfo;
+  CHAR16                                 *FileName;
+  UINT64                                 FileSize;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -529,9 +542,12 @@ UdfRead (
   FileEntry            = PrivFileData->UdfFileSystemData.FileEntry;
   FileIdentifierDesc   = PrivFileData->UdfFileSystemData.FileIdentifierDesc;
 
-  BlockIo     = PrivFileData->BlockIo;
-  DiskIo      = PrivFileData->DiskIo;
-  BlockSize   = PrivFileData->BlockSize;
+  BlockIo                  = PrivFileData->BlockIo;
+  DiskIo                   = PrivFileData->DiskIo;
+  BlockSize                = PrivFileData->BlockSize;
+  FileName                 = NULL;
+  PrevFileIdentifierDesc   = NULL;
+  NextFileIdentifierDesc   = NULL;
 
   if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
     //
@@ -662,6 +678,163 @@ ReadFile:
     *BufferSize = BufferOffset;
     Status = EFI_SUCCESS;
   } else if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+    DirsCount = PrivFileData->FilePosition + 1;
+
+    //
+    // Find current directory entry
+    //
+    for (;;) {
+      Status = ReadDirectory (
+	    BlockIo,
+	    DiskIo,
+	    BlockSize,
+	    PartitionDesc,
+	    FileIdentifierDesc,
+	    PrevFileIdentifierDesc,
+	    &NextFileIdentifierDesc
+	    );
+      if (EFI_ERROR (Status)) {
+	goto Exit;
+      }
+
+      if (!NextFileIdentifierDesc) {
+	break;
+      }
+
+      //
+      // Ignore Parent FID
+      //
+      if (IS_FID_PARENT_FILE (NextFileIdentifierDesc)) {
+	goto ReadNextFid;
+      }
+
+      if (!--DirsCount) {
+	break;
+      }
+
+ReadNextFid:
+      if (PrevFileIdentifierDesc) {
+	FreePool ((VOID *)PrevFileIdentifierDesc);
+      }
+
+      PrevFileIdentifierDesc = NextFileIdentifierDesc;
+    }
+
+    if (DirsCount) {
+      //
+      // Directory entry not found
+      //
+      *BufferSize = 0;
+      Status = EFI_SUCCESS;
+      goto Exit;
+    }
+
+    //
+    // Found current directory entry. Set up EFI_FILE_INFO structure.
+    //
+    FileIdentifierDesc = NextFileIdentifierDesc;
+
+    Status = FileIdentifierDescToFileName (FileIdentifierDesc, &FileName);
+    if (EFI_ERROR (Status)) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // Check if BufferSize is too small to read the current directory entry
+    //
+    FileInfoLength = sizeof (EFI_FILE_INFO) + StrLen (FileName) + 1;
+    if (*BufferSize < FileInfoLength) {
+      *BufferSize = FileInfoLength;
+      Status = EFI_BUFFER_TOO_SMALL;
+      goto Exit;
+    }
+
+    FileInfo = (EFI_FILE_INFO *) Buffer;
+
+    FileInfo->Size = FileInfoLength;
+
+    FileInfo->Attribute |= EFI_FILE_READ_ONLY;
+
+    if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+      Status = GetDirectorySize (
+                             BlockIo,
+			     DiskIo,
+			     BlockSize,
+			     PartitionDesc,
+			     FileIdentifierDesc,
+			     &FileSize
+			     );
+      if (EFI_ERROR (Status)) {
+	goto Exit;
+      }
+
+      FileInfo->Attribute |= EFI_FILE_DIRECTORY;
+    } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+      FileSize = FileEntry->InformationLength;
+      FileInfo->Attribute |= EFI_FILE_ARCHIVE;
+    }
+
+    if (IS_FID_HIDDEN_FILE (FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_HIDDEN;
+    }
+
+    //
+    // Check if file has System bit set (bit 10)
+    //
+    if (FileEntry->IcbTag.Flags & (1 << 10)) {
+      FileInfo->Attribute |= EFI_FILE_SYSTEM;
+    }
+
+    FileInfo->FileSize = FileSize;
+
+    FileInfo->PhysicalSize = FileEntry->InformationLength;
+
+    FileInfo->CreateTime.Year         = FileEntry->AccessTime.Year;
+    FileInfo->CreateTime.Month        = FileEntry->AccessTime.Month;
+    FileInfo->CreateTime.Day          = FileEntry->AccessTime.Day;
+    FileInfo->CreateTime.Hour         = FileEntry->AccessTime.Hour;
+    FileInfo->CreateTime.Minute       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Second       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Nanosecond   =
+         FileEntry->AccessTime.HundredsOfMicroseconds;
+
+    //
+    // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
+    // structures should be interpreted as Local Time. Use
+    // EFI_UNSPECIFIED_TIMEZONE for Local Time.
+    //
+    FileInfo->CreateTime.TimeZone   = EFI_UNSPECIFIED_TIMEZONE;
+    FileInfo->CreateTime.Daylight   = EFI_TIME_ADJUST_DAYLIGHT;
+
+    //
+    // As per ECMA-167 specification, the Modification Time should be identical
+    // to the content of the Access Time field.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->ModificationTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    //
+    // Since we're accessing a DVD read-only disc - the Last Access Time
+    // field, obviously, should be the same as Create Time.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->LastAccessTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    StrCpy (FileInfo->FileName, FileName);
+
+    //
+    // Update the current position to the next directory entry
+    //
+    PrivFileData->FilePosition++;
+
+    *BufferSize = FileInfoLength;
     Status = EFI_SUCCESS;
   } else if (IS_FID_DELETED_FILE (FileIdentifierDesc)) {
     Status = EFI_DEVICE_ERROR;
@@ -670,6 +843,18 @@ ReadFile:
   }
 
 Exit:
+  if (FileName) {
+    FreePool ((VOID *)FileName);
+  }
+
+  if (PrevFileIdentifierDesc) {
+    FreePool ((VOID *)PrevFileIdentifierDesc);
+  }
+
+  if (NextFileIdentifierDesc) {
+    FreePool ((VOID *)NextFileIdentifierDesc);
+  }
+
   gBS->RestoreTPL (OldTpl);
 
   return Status;
@@ -896,6 +1081,7 @@ UdfGetInfo (
   BlockIo     = PrivFileData->BlockIo;
   DiskIo      = PrivFileData->DiskIo;
   BlockSize   = PrivFileData->BlockSize;
+  FileName    = NULL;
 
   if (CompareGuid (InformationType, &gEfiFileInfoGuid)) {
     Status = FileIdentifierDescToFileName (FileIdentifierDesc, &FileName);
@@ -913,8 +1099,6 @@ UdfGetInfo (
       Status = EFI_BUFFER_TOO_SMALL;
       goto Exit;
     }
-
-    ZeroMem (Buffer, FileInfoLength);
 
     FileInfo = (EFI_FILE_INFO *) Buffer;
 
@@ -993,9 +1177,7 @@ UdfGetInfo (
       sizeof (EFI_TIME)
       );
 
-    CopyMem ((VOID *)&FileInfo->FileName, (VOID *)FileName, StrLen (FileName));
-
-    FileInfo->FileName[StrLen (FileName)] = '\0';
+    StrCpy (FileInfo->FileName, FileName);
 
     *BufferSize = FileInfoLength;
     Status = EFI_SUCCESS;
@@ -1059,6 +1241,10 @@ UdfGetInfo (
   }
 
 Exit:
+  if (FileName) {
+    FreePool ((VOID *)FileName);
+  }
+
   return Status;
 }
 
@@ -2015,10 +2201,6 @@ Exit:
   return Status;
 }
 
-//
-// FIXME: The filename is not quite correct. it's displayed with some weird
-// chars. Read spec to know more about it.
-//
 EFI_STATUS
 EFIAPI
 FileIdentifierDescToFileName (
@@ -2028,12 +2210,14 @@ FileIdentifierDescToFileName (
 {
   EFI_STATUS                          Status;
   CHAR16                              *FileIdentifier;
+  CHAR16                              *String;
+  UINTN                               Index;
 
   Status = EFI_SUCCESS;
 
   *FileName = AllocatePool (
                  FileIdentifierDesc->LengthOfFileIdentifier +
-		 sizeof (CHAR16) + 3
+		 sizeof (CHAR16)
                  );
   if (!*FileName) {
     Status = EFI_OUT_OF_RESOURCES;
@@ -2047,13 +2231,17 @@ FileIdentifierDescToFileName (
      (UINT8 *)&FileIdentifierDesc->Data +
      FileIdentifierDesc->LengthOfImplementationUse + 2
      );
-  CopyMem (
-    (VOID *)*FileName,
-    (VOID *)FileIdentifier,
-    FileIdentifierDesc->LengthOfFileIdentifier + 2
-    );
 
-  (*FileName)[FileIdentifierDesc->LengthOfFileIdentifier + 2] = '\0';
+  String = *FileName;
+
+  for (Index = 2;
+       Index < FileIdentifierDesc->LengthOfFileIdentifier;
+       Index += 2
+      ) {
+    *String++ = *FileIdentifier++;
+  }
+
+  *String = '\0';
 
 Exit:
   return Status;
