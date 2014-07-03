@@ -37,8 +37,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DevicePathLib.h>
 
-#define FIRST_ANCHOR_POINT_LSN                ((UINT32)0x0000000000000100UL)
-#define PRIMARY_VOLUME_DESCRIPTOR_LSN         ((UINT32)0x0000000000000010UL)
+#define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
+#define NSR_DESCRIPTOR_LSN                    ((UINT64)0x0000000000000013ULL)
 
 #define IS_PVD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 1)
@@ -178,6 +178,17 @@ typedef struct {
   UINT16                           Flags;
   UINT8                            Reserved[22];
 } UDF_PRIMARY_VOLUME_DESCRIPTOR;
+
+//
+// ECMA 167 3/9.1
+//
+typedef struct {
+  UINT8                 StructureType;
+  UINT8                 StandardIdentifier[5];
+  UINT8                 StructureVersion;
+  UINT8                 Reserved;
+  UINT8                 StructureData[2040];
+} UDF_NSR_DESCRIPTOR;
 
 typedef struct {
   UDF_DESCRIPTOR_TAG                      DescriptorTag;
@@ -409,17 +420,6 @@ typedef struct {
   UINT64                                  UniqueId;
   UINT8                                   Reserved[24];
 } UDF_LOGICAL_VOLUME_HEADER_DESCRIPTOR;
-
-//
-// ECMA 167 3/9.1
-//
-typedef struct {
-  UINT8                 StructureType;
-  UINT8                 StandardIdentifier[5];
-  UINT8                 StructureVersion;
-  UINT8                 Reserved;
-  UINT8                 StructureData[2040];
-} UDF_NSR_DESCRIPTOR;
 
 #pragma pack()
 
@@ -765,6 +765,14 @@ GetDirectorySize (
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   OUT UINT64                                *Size
+  );
+
+EFI_STATUS
+IsSupportedUdfVolume (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UINT32                                  BlockSize,
+  OUT BOOLEAN                                *Supported
   );
 
 /**

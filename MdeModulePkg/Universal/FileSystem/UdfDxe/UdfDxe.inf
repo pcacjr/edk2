@@ -60,8 +60,10 @@
 
 [Protocols]
   gEfiBlockIoProtocolGuid                       ## BY_START
+  gEfiDevicePathProtocolGuid                    ## BY_START
   gEfiSimpleFileSystemProtocolGuid              ## BY_START
   gEfiDiskIoProtocolGuid                        ## BY_START
   gEfiBlockIoProtocolGuid                       ## TO_START
+  gEfiDevicePathProtocolGuid                    ## TO_START
   gEfiSimpleFileSystemProtocolGuid              ## BY_START
   gEfiDiskIoProtocolGuid                        ## TO_START
