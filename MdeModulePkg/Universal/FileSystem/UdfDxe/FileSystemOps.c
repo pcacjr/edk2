@@ -1303,6 +1303,49 @@ UdfFlush (
 
 STATIC
 EFI_STATUS
+FindNsrDescriptor (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UINT32                                  BlockSize,
+  OUT VOID                                   **Buffer
+  )
+{
+  EFI_STATUS                                 Status;
+  UDF_NSR_DESCRIPTOR                         *NsrDescriptor;
+
+  *Buffer = AllocatePool (BlockSize);
+  if (!*Buffer) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Exit;
+  }
+
+  Status = DiskIo->ReadDisk (
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+                       NSR_DESCRIPTOR_LSN * BlockSize,
+                       BlockSize,
+                       *Buffer
+                       );
+  if (EFI_ERROR (Status)) {
+    goto FreeExit;
+  }
+
+  Print (L"FindNsrDescriptor: Get NSR Descriptor\n");
+
+  NsrDescriptor = (UDF_NSR_DESCRIPTOR *)*Buffer;
+
+  return Status;
+
+FreeExit:
+  FreePool (*Buffer);
+  *Buffer = NULL;
+
+Exit:
+  return Status;
+}
+
+STATIC
+EFI_STATUS
 FindAnchorVolumeDescriptorPointer (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
@@ -1331,9 +1374,7 @@ FindAnchorVolumeDescriptorPointer (
     goto FreeExit;
   }
 
-  Print (
-    L"UdfDriverStart: Get AVDP\n"
-    );
+  Print (L"UdfDriverStart: Get AVDP\n");
 
   AnchorPoint = (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER *)*Buffer;
 
@@ -1459,15 +1500,11 @@ StartMainVolumeDescriptorSequence (
     }
 
     if (IS_PD (Buffer)) {
-      Print (
-	L"UdfDriverStart: Get PD\n"
-	);
+      Print (L"UdfDriverStart: Get PD\n");
 
       CopyMem (*Buffer0, Buffer, BlockSize);
     } else if (IS_LVD (Buffer)) {
-      Print (
-	L"UdfDriverStart: Get LVD\n"
-	);
+      Print (L"UdfDriverStart: Get LVD\n");
 
       CopyMem (*Buffer1, Buffer, BlockSize);
     }
@@ -2341,6 +2378,45 @@ ReadNextFid:
 FreeExit:
   FreePool ((VOID *)FileEntry);
   FreePool ((VOID *)PrevFileIdentifierDesc);
+
+Exit:
+  return Status;
+}
+
+EFI_STATUS
+IsSupportedUdfVolume (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UINT32                                  BlockSize,
+  OUT BOOLEAN                                *Supported
+  )
+{
+  EFI_STATUS                                 Status;
+  UDF_NSR_DESCRIPTOR                         *NsrDescriptor;
+
+  Status = FindNsrDescriptor (
+                          BlockIo,
+			  DiskIo,
+			  BlockSize,
+			  (VOID **)&NsrDescriptor
+                          );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  if ((NsrDescriptor->StructureType == 0) &&
+      ((NsrDescriptor->StandardIdentifier[0] == 'B') &&
+       (NsrDescriptor->StandardIdentifier[1] == 'E') &&
+       (NsrDescriptor->StandardIdentifier[2] == 'A') &&
+       (NsrDescriptor->StandardIdentifier[3] == '0') &&
+       (NsrDescriptor->StandardIdentifier[4] == '1')) &&
+      (NsrDescriptor->StructureVersion == 1)) {
+    *Supported = TRUE;
+  } else {
+    *Supported = FALSE;
+  }
+
+  FreePool ((VOID *)NsrDescriptor);
 
 Exit:
   return Status;
