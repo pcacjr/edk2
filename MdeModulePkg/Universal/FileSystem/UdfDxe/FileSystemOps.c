@@ -2249,64 +2249,6 @@ Exit:
 
 EFI_STATUS
 EFIAPI
-ListDirectoryFids (
-  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UINT32                                 BlockSize,
-  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc
-  )
-{
-  EFI_STATUS                                Status;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR            *PrevFileIdentifierDesc;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR            *NextFileIdentifierDesc;
-  CHAR16                                    *FileName;
-
-  PrevFileIdentifierDesc = NULL;
-
-  Print(L"Listing parent directory FIDs:\n");
-
-  for (;;) {
-    Status = ReadDirectory (
-                        BlockIo,
-			DiskIo,
-			BlockSize,
-		        PartitionDesc,
-		        ParentFileIdentifierDesc,
-			PrevFileIdentifierDesc,
-		        &NextFileIdentifierDesc
-			);
-    if (EFI_ERROR (Status)) {
-      goto Exit;
-    }
-
-    if (!NextFileIdentifierDesc) {
-      break;
-    }
-
-    Status = FileIdentifierDescToFileName (NextFileIdentifierDesc, &FileName);
-    if (EFI_ERROR (Status)) {
-      goto FreeExit;
-    }
-
-    Print (L"    %s\n", FileName);
-
-    if (PrevFileIdentifierDesc) {
-      FreePool ((VOID *)PrevFileIdentifierDesc);
-    }
-
-    PrevFileIdentifierDesc = NextFileIdentifierDesc;
-  }
-
-FreeExit:
-  FreePool ((VOID *)PrevFileIdentifierDesc);
-
-Exit:
-  return Status;
-}
-
-EFI_STATUS
-EFIAPI
 GetDirectorySize (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
