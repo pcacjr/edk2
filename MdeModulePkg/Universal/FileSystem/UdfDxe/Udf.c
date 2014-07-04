@@ -127,9 +127,14 @@ UdfDriverBindingStart (
   EFI_STATUS                      Status;
   EFI_BLOCK_IO_PROTOCOL           *BlockIo;
   EFI_DISK_IO_PROTOCOL            *DiskIo;
-  UINT32                          BlockSize;
   BOOLEAN                         IsUdfVolume;
   PRIVATE_UDF_SIMPLE_FS_DATA      *PrivFsData;
+#if 0
+  EFI_FILE_PROTOCOL               *Root;
+  EFI_FILE_PROTOCOL               *NewRoot;
+#endif
+  //UINT8                           Buffer[4096];
+  //UINT32                          BufferSize;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -164,17 +169,11 @@ UdfDriverBindingStart (
   }
 
   //
-  // Logical block size for DVD ready-only discs
-  //
-  BlockSize = 2048;
-
-  //
   // Check if media contains a valid UDF volume
   //
   Status = IsSupportedUdfVolume (
                        BlockIo,
 		       DiskIo,
-		       BlockSize,
 		       &IsUdfVolume
                        );
   if (EFI_ERROR (Status)) {
@@ -198,10 +197,17 @@ UdfDriverBindingStart (
   PrivFsData->Signature   = PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE;
   PrivFsData->BlockIo     = BlockIo;
   PrivFsData->DiskIo      = DiskIo;
-  PrivFsData->BlockSize   = BlockSize;
 
   PrivFsData->SimpleFs.Revision   = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
   PrivFsData->SimpleFs.OpenVolume = UdfOpenVolume;
+
+#if 0
+  Status = PrivFsData->SimpleFs.OpenVolume (&PrivFsData->SimpleFs, &Root);
+  ASSERT_EFI_ERROR (Status);
+
+  Status = Root->Open (Root, &NewRoot, L"\\efi", 0, 0);
+  ASSERT_EFI_ERROR (Status);
+#endif
 
   PrivFsData->Handle = NULL;
 
