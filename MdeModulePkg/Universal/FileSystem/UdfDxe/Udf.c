@@ -26,6 +26,17 @@ EFI_DRIVER_BINDING_PROTOCOL gUdfDriverBinding = {
   NULL
 };
 
+UDF_DEVICE_PATH gUdfDriverDevicePath = {
+  {
+    { MEDIA_DEVICE_PATH, MEDIA_VENDOR_DP, { sizeof (VENDOR_DEVICE_PATH), 0 } },
+    EFI_UDF_DEVICE_PATH_GUID
+  },
+  { END_DEVICE_PATH_TYPE, END_ENTIRE_DEVICE_PATH_SUBTYPE, {
+                              sizeof (EFI_DEVICE_PATH_PROTOCOL), 0
+                              }
+  }
+};
+
 /**
   Test to see if this driver supports ControllerHandle. Any ControllerHandle
   than contains a BlockIo and DiskIo protocol or a BlockIo2 protocol can be
@@ -182,7 +193,7 @@ UdfDriverBindingStart (
   }
 
   //
-  // Set up new child handle
+  // Create new child handle
   //
   PrivFsData->Signature   = PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE;
   PrivFsData->BlockIo     = BlockIo;
@@ -198,12 +209,13 @@ UdfDriverBindingStart (
   // Install new child handle
   //
   Status = gBS->InstallMultipleProtocolInterfaces (
-                                      &PrivFsData->Handle,
-				      &gEfiSimpleFileSystemProtocolGuid,
-				      &PrivFsData->SimpleFs,
-				      NULL,
-				      NULL
-                                      );
+                                     &PrivFsData->Handle,
+                                     &gEfiSimpleFileSystemProtocolGuid,
+                                     &PrivFsData->SimpleFs,
+                                     &gEfiDevicePathProtocolGuid,
+                                     &gUdfDriverDevicePath,
+                                     NULL
+                                     );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
