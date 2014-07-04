@@ -475,6 +475,17 @@ typedef struct {
   EFI_HANDLE                        Handle;
 } PRIVATE_UDF_SIMPLE_FS_DATA;
 
+typedef struct {
+  VENDOR_DEVICE_PATH         DevicePath;
+  EFI_DEVICE_PATH_PROTOCOL   End;
+} UDF_DEVICE_PATH;
+
+// C5BD4D42-1A76-4996-8956-73CDA326CD0A
+#define EFI_UDF_DEVICE_PATH_GUID \
+  { 0xC5BD4D42, 0x1A76, 0x4996, \
+    { 0x89, 0x56, 0x73, 0xCD, 0xA3, 0x26, 0xCD, 0x0A } \
+  }
+
 //
 // Global Variables
 //
