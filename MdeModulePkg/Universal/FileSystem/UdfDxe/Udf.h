@@ -37,6 +37,13 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DevicePathLib.h>
 
+//
+// As specified in ECMA-167 specification, the logical sector size and logical
+// block size shall be 2048 bytes.
+//
+#define LOGICAL_SECTOR_SIZE                   0x800
+#define LOGICAL_BLOCK_SIZE                    0x800
+
 #define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
 #define NSR_DESCRIPTOR_LSN                    ((UINT64)0x0000000000000013ULL)
 
@@ -330,7 +337,7 @@ typedef struct {
   UINT8                             LengthOfFileIdentifier;
   UDF_LONG_ALLOCATION_DESCRIPTOR    Icb;
   UINT16                            LengthOfImplementationUse;
-  UINT8                             Data[0];
+  UINT8                             Data[2010];
 } UDF_FILE_IDENTIFIER_DESCRIPTOR;
 
 //
@@ -349,6 +356,9 @@ typedef struct {
 
 //
 // ECMA 167 4/14.9
+//
+// NOTE: The total length of a FE shall not exceed the size of one logical block
+// (2048 bytes).
 //
 typedef struct {
   UDF_DESCRIPTOR_TAG               DescriptorTag;
@@ -371,7 +381,7 @@ typedef struct {
   UINT64                           UniqueId;
   UINT32                           LengthOfExtendedAttributes;
   UINT32                           LengthOfAllocationDescriptors;
-  UINT8                            Data[0]; // L_EA and L_AD
+  UINT8                            Data[1872]; // L_EAs and L_ADs
 } UDF_FILE_ENTRY;
 
 //
@@ -440,18 +450,17 @@ typedef struct {
   UINTN                                  Signature;
 
   struct {
-    UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
-    UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
-    UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
-    UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
-    UDF_FILE_ENTRY                         *FileEntry;
-    UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
+    UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   AnchorPoint;
+    UDF_PARTITION_DESCRIPTOR               PartitionDesc;
+    UDF_LOGICAL_VOLUME_DESCRIPTOR          LogicalVolDesc;
+    UDF_FILE_SET_DESCRIPTOR                FileSetDesc;
+    UDF_FILE_ENTRY                         FileEntry;
+    UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
   } UdfFileSystemData;
 
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
-  UINT32                                 BlockSize;
   EFI_FILE_PROTOCOL                      FileIo;
   UINT64                                 FilePosition;
 } PRIVATE_UDF_FILE_DATA;
@@ -470,7 +479,6 @@ typedef struct {
   UINTN                             Signature;
   EFI_BLOCK_IO_PROTOCOL             *BlockIo;
   EFI_DISK_IO_PROTOCOL              *DiskIo;
-  UINT32                            BlockSize;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL   SimpleFs;
   EFI_HANDLE                        Handle;
 } PRIVATE_UDF_SIMPLE_FS_DATA;
@@ -739,13 +747,12 @@ EFIAPI
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN OUT UINT32                              *BlockSize,
-  OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   **AnchorPoint,
-  OUT UDF_PARTITION_DESCRIPTOR               **PartitionDesc,
-  OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          **LogicalVolDesc,
-  OUT UDF_FILE_SET_DESCRIPTOR                **FileSetDesc,
-  OUT UDF_FILE_ENTRY                         **FileEntry,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FileIdentifierDesc
+  OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint,
+  OUT UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc,
+  OUT UDF_FILE_SET_DESCRIPTOR                *FileSetDesc,
+  OUT UDF_FILE_ENTRY                         *FileEntry,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
 
 EFI_STATUS
@@ -753,11 +760,12 @@ EFIAPI
 ReadDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UINT32                                 BlockSize,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        **ReadFileIdentifierDesc
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
+  IN BOOLEAN                                FirstRead,
+  OUT BOOLEAN                               *ReadDone
   );
 
 EFI_STATUS
@@ -772,7 +780,6 @@ EFIAPI
 GetDirectorySize (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UINT32                                 BlockSize,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   OUT UINT64                                *Size
@@ -782,8 +789,22 @@ EFI_STATUS
 IsSupportedUdfVolume (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UINT32                                  BlockSize,
   OUT BOOLEAN                                *Supported
+  );
+
+EFI_STATUS
+DuplicatePrivateFileData (
+  IN PRIVATE_UDF_FILE_DATA                   *PrivFileData,
+  OUT PRIVATE_UDF_FILE_DATA                  **NewPrivFileData
+  );
+
+EFI_STATUS
+FindFileIdentifierDescriptorRootDir (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_PARTITION_DESCRIPTOR                *PartitionDesc,
+  IN UDF_FILE_SET_DESCRIPTOR                 *FileSetDesc,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
 
 /**
