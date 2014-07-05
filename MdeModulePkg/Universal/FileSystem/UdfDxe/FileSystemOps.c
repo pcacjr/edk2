@@ -14,8 +14,6 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
-//#define UDF_DEBUG
-
 //
 // OSTA CS0 Character Set
 //
@@ -584,7 +582,8 @@ UdfRead (
   FileName                 = NULL;
 
 #ifdef UDF_DEBUG
-  Print (L"UdfRead: BufferSize: %d\n", *BufferSize);
+  Print (L"UdfRead: BufferSize:            %d\n", *BufferSize);
+  Print (L"UdfRead: Current file position: %d\n", PrivFileData->FilePosition);
 #endif
 
   if (IS_FID_NORMAL_FILE (ParentFileIdentifierDesc)) {
@@ -683,6 +682,7 @@ UdfRead (
       }
 
       FilePosition += ShortAd->ExtentLength;
+      ShortAd++;
     } while (--ShortAdsNo);
 
     if (!ShortAdsNo) {
@@ -694,34 +694,66 @@ ReadFile:
     //
     // Found file position through the extents. Now, start reading file.
     //
+#ifdef UDF_DEBUG
+    Print (L"UdfRead: ExtStartOffset:        %d\n", ExtStartOffset);
+    Print (L"UdfRead: ExtLen:                %d\n", ExtLen);
+    Print (L"UdfRead: ShortAdsNo:            %d\n", ShortAdsNo);
+    Print (
+      L"UdfRead: Partition start:            %d\n",
+      PartitionDesc->PartitionStartingLocation
+      );
+    Print (
+      L"UdfRead: Partition size:             %d\n",
+      PartitionDesc->PartitionLength
+      );
+#endif
+
     BufferOffset   = 0;
     BytesLeft      = *BufferSize;
 
     while ((ShortAdsNo--) && (BytesLeft)) {
       if (ShortAd->ExtentLength - ExtLen > BytesLeft) {
-	BytesLeft = ShortAd->ExtentLength - ExtLen;
+	ExtLen = BytesLeft;
+      } else {
+	ExtLen = ShortAd->ExtentLength - ExtLen;
       }
 
+#ifdef UDF_DEBUG
+      Print (L"UdfRead: BytesLeft:        %d\n", BytesLeft);
+      Print (L"UdfRead: BufferOffset:     %d\n", BufferOffset);
+      Print (L"UdfRead: File Position:    %d\n", PrivFileData->FilePosition);
+      Print (
+	L"UdfRead: ShortAd: pos (%d) len (%d - %d)\n",
+	ShortAd->ExtentPosition,
+	ShortAd->ExtentLength,
+	ExtLen
+	);
+#endif
       Status = DiskIo->ReadDisk (
-	                   DiskIo,
-			   BlockIo->Media->MediaId,
-			   ExtStartOffset +
-			   ((PartitionDesc->PartitionStartingLocation +
-			     ShortAd->ExtentPosition) * LOGICAL_BLOCK_SIZE),
-			   ShortAd->ExtentLength - ExtLen,
-			   (VOID *)((UINT8 *)Buffer + BufferOffset)
-	                   );
+                              DiskIo,
+				BlockIo->Media->MediaId,
+				ExtStartOffset +
+				((PartitionDesc->PartitionStartingLocation +
+	                         ShortAd->ExtentPosition) * LOGICAL_BLOCK_SIZE),
+				ExtLen,
+				(VOID *)((UINT8 *)Buffer + BufferOffset)
+				);
       if (EFI_ERROR (Status)) {
 	Status = EFI_DEVICE_ERROR;
 	goto Exit;
       }
 
-      BytesLeft                    -= ShortAd->ExtentLength - ExtLen;
-      BufferOffset                 += ShortAd->ExtentLength - ExtLen;
-      PrivFileData->FilePosition   += ShortAd->ExtentLength - ExtLen;
+      BytesLeft                    -= ExtLen;
+      BufferOffset                 += ExtLen;
+      PrivFileData->FilePosition   += ExtLen;
       ExtStartOffset               = 0;
       ExtLen                       = 0;
+      ShortAd++;
     }
+
+#ifdef UDF_DEBUG
+    Print (L"UdfRead: Read %d bytes from the file\n", *BufferSize);
+#endif
 
     *BufferSize = BufferOffset;
     Status = EFI_SUCCESS;
@@ -1114,6 +1146,9 @@ UdfSetPosition (
     } else {
       PrivFileData->FilePosition = Position;
     }
+#ifdef UDF_DEBUG
+    Print (L"UdfSetPosition: File position set to %d\n", Position);
+#endif
   } else {
     Status = EFI_UNSUPPORTED;
   }
