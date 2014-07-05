@@ -538,7 +538,7 @@ UdfRead (
   EFI_STATUS                             Status;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
   UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
-  UDF_FILE_ENTRY                         *FileEntry;
+  UDF_FILE_ENTRY                         *ParentFileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
@@ -557,6 +557,10 @@ UdfRead (
   EFI_FILE_INFO                          *FileInfo;
   CHAR16                                 *FileName;
   UINT64                                 FileSize;
+  UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
+  UINT32                                 Lsn;
+  UINT64                                 Offset;
+  UDF_FILE_ENTRY                         FileEntry;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -572,7 +576,7 @@ UdfRead (
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
   PartitionDesc            = &PrivFileData->UdfFileSystemData.PartitionDesc;
-  FileEntry                = &PrivFileData->UdfFileSystemData.FileEntry;
+  ParentFileEntry          = &PrivFileData->UdfFileSystemData.FileEntry;
   ParentFileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
 
   BlockIo                  = PrivFileData->BlockIo;
@@ -583,7 +587,7 @@ UdfRead (
     //
     // Check if the current position is beyond the EOF
     //
-    if (PrivFileData->FilePosition >= FileEntry->InformationLength) {
+    if (PrivFileData->FilePosition >= ParentFileEntry->InformationLength) {
       Status = EFI_DEVICE_ERROR;
       goto Exit;
     }
@@ -591,7 +595,7 @@ UdfRead (
     //
     // File Type should be 5 for a standard byte addressable file
     //
-    if (FileEntry->IcbTag.FileType != 5) {
+    if (ParentFileEntry->IcbTag.FileType != 5) {
       Status = EFI_VOLUME_CORRUPTED;
       goto Exit;
     }
@@ -600,7 +604,7 @@ UdfRead (
     // The Type of Allocation Descriptor (bit 0-2) in Flags field of ICB Tag
     // shall be set to 0 which means that Short Allocation Descriptors are used.
     //
-    if (FileEntry->IcbTag.Flags & 0x07) {
+    if (ParentFileEntry->IcbTag.Flags & 0x07) {
       Status = EFI_VOLUME_CORRUPTED;
       goto Exit;
     }
@@ -608,7 +612,7 @@ UdfRead (
     //
     // Strategy Type of 4 is the only supported
     //
-    if (FileEntry->IcbTag.StrategyType != 4) {
+    if (ParentFileEntry->IcbTag.StrategyType != 4) {
       Status = EFI_VOLUME_CORRUPTED;
       goto Exit;
     }
@@ -616,16 +620,16 @@ UdfRead (
     //
     // OK, now read file's extents to find recorded data.
     //
-    ShortAdsNo = FileEntry->LengthOfAllocationDescriptors /
-                 sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
+    ShortAdsNo = ParentFileEntry->LengthOfAllocationDescriptors /
+                    sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
 
     //
     // NOTE: The total length of a File Entry shall not exceed the size of one
     // logical block, so it's OK.
     //
     ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)(
-                            (UINT8 *)&FileEntry->Data +
-			    FileEntry->LengthOfExtendedAttributes
+                            (UINT8 *)&ParentFileEntry->Data +
+			    ParentFileEntry->LengthOfExtendedAttributes
                             );
 
     ExtStartOffset   = 0;
@@ -760,6 +764,38 @@ ReadFile:
       goto Exit;
     }
 
+    //
+    // Find FE of the current directory entry
+    //
+    LongAd = &FileIdentifierDesc.Icb;
+
+    Lsn = PartitionDesc->PartitionStartingLocation +
+      LongAd->ExtentLocation.LogicalBlockNumber;
+
+    Offset = Lsn * LOGICAL_BLOCK_SIZE;
+
+    //
+    // Read FE
+    //
+    Status = DiskIo->ReadDisk (
+                            DiskIo,
+			    BlockIo->Media->MediaId,
+			    Offset,
+			    sizeof (UDF_FILE_ENTRY),
+			    (VOID *)&FileEntry
+                            );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+
+    //
+    // TODO: check if ICB Tag's flags field contain all valid bits set
+    //
+    if (!IS_FE (&FileEntry)) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
 #ifdef UDF_DEBUG
     Print (L"UdfRead: FileName: %s\n", FileName);
 #endif
@@ -781,7 +817,6 @@ ReadFile:
     FileInfo->Attribute   |= EFI_FILE_READ_ONLY;
 
     if (IS_FID_DIRECTORY_FILE (&FileIdentifierDesc)) {
-#if 0
       Status = GetDirectorySize (
                              BlockIo,
 			     DiskIo,
@@ -792,12 +827,10 @@ ReadFile:
       if (EFI_ERROR (Status)) {
 	goto Exit;
       }
-#endif
-      FileSize = 100000;
 
       FileInfo->Attribute |= EFI_FILE_DIRECTORY;
     } else if (IS_FID_NORMAL_FILE (&FileIdentifierDesc)) {
-      FileSize = FileEntry->InformationLength;
+      FileSize = FileEntry.InformationLength;
       FileInfo->Attribute |= EFI_FILE_ARCHIVE;
     }
 
@@ -808,22 +841,21 @@ ReadFile:
     //
     // Check if file has System bit set (bit 10)
     //
-    if (FileEntry->IcbTag.Flags & (1 << 10)) {
+    if (FileEntry.IcbTag.Flags & (1 << 10)) {
       FileInfo->Attribute |= EFI_FILE_SYSTEM;
     }
 
-    FileInfo->FileSize = FileSize;
+    FileInfo->FileSize       = FileSize;
+    FileInfo->PhysicalSize   = FileSize;
 
-    FileInfo->PhysicalSize = FileEntry->InformationLength;
-
-    FileInfo->CreateTime.Year         = FileEntry->AccessTime.Year;
-    FileInfo->CreateTime.Month        = FileEntry->AccessTime.Month;
-    FileInfo->CreateTime.Day          = FileEntry->AccessTime.Day;
-    FileInfo->CreateTime.Hour         = FileEntry->AccessTime.Hour;
-    FileInfo->CreateTime.Minute       = FileEntry->AccessTime.Second;
-    FileInfo->CreateTime.Second       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Year         = FileEntry.AccessTime.Year;
+    FileInfo->CreateTime.Month        = FileEntry.AccessTime.Month;
+    FileInfo->CreateTime.Day          = FileEntry.AccessTime.Day;
+    FileInfo->CreateTime.Hour         = FileEntry.AccessTime.Hour;
+    FileInfo->CreateTime.Minute       = FileEntry.AccessTime.Second;
+    FileInfo->CreateTime.Second       = FileEntry.AccessTime.Second;
     FileInfo->CreateTime.Nanosecond   =
-         FileEntry->AccessTime.HundredsOfMicroseconds;
+         FileEntry.AccessTime.HundredsOfMicroseconds;
 
     //
     // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
@@ -1164,7 +1196,6 @@ UdfGetInfo (
     FileInfo->Attribute    |= EFI_FILE_READ_ONLY;
 
     if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
-#if 0
       Status = GetDirectorySize (
                              BlockIo,
 			     DiskIo,
@@ -1175,9 +1206,6 @@ UdfGetInfo (
       if (EFI_ERROR (Status)) {
 	goto Exit;
       }
-#endif
-
-      FileSize = 100000;
 
       FileInfo->Attribute |= EFI_FILE_DIRECTORY;
     } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
@@ -1200,9 +1228,8 @@ UdfGetInfo (
       FileInfo->Attribute |= EFI_FILE_SYSTEM;
     }
 
-    FileInfo->FileSize = FileSize;
-
-    FileInfo->PhysicalSize = FileEntry->InformationLength;
+    FileInfo->FileSize       = FileSize;
+    FileInfo->PhysicalSize   = FileSize;
 
     FileInfo->CreateTime.Year         = FileEntry->AccessTime.Year;
     FileInfo->CreateTime.Month        = FileEntry->AccessTime.Month;
