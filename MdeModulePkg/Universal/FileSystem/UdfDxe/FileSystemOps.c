@@ -153,9 +153,8 @@ UdfOpen (
   UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
   UDF_FILE_ENTRY                         FileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR         PrevFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
-  BOOLEAN                                FirstRead;
+  UINT64                                 NextOffset;
   BOOLEAN                                ReadDone;
   CHAR16                                 *Str;
   CHAR16                                 *StrAux;
@@ -298,7 +297,7 @@ NextLookup:
       }
     }
 
-    if (StrnCmp (StrAux, L"..", 2) == 0) {
+    if (StrCmp (StrAux, L"..") == 0) {
       //
       // Make sure we're not going to look up Parent FID from a root
       // directory or even if the current FID is not a directory(!)
@@ -345,7 +344,7 @@ NextLookup:
 
       Found = TRUE;
       continue;
-    } else if (StrnCmp (StrAux, L".", 1) == 0) {
+    } else if (StrCmp (StrAux, L".") == 0) {
 #ifdef UDF_DEBUG
       Print (L"UdfOpen: Found file \'%s\'\n", Str);
 #endif
@@ -357,25 +356,24 @@ NextLookup:
     //
     // Start lookup
     //
-    FirstRead = TRUE;
-
     CopyMem (
       (VOID *)&ParentFileIdentifierDesc,
       (VOID *)&FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
 
+    NextOffset = 0;
+
     for (;;) {
       Status = ReadDirectory (
-	    BlockIo,
-	    DiskIo,
-	    PartitionDesc,
-	    &ParentFileIdentifierDesc,
-	    &PrevFileIdentifierDesc,
-	    &FileIdentifierDesc,
-	    FirstRead,
-	    &ReadDone
-	    );
+                          BlockIo,
+			  DiskIo,
+			  PartitionDesc,
+			  &ParentFileIdentifierDesc,
+			  &FileIdentifierDesc,
+			  &NextOffset,
+			  &ReadDone
+	                  );
       if (EFI_ERROR (Status)) {
 	goto Exit;
       }
@@ -385,13 +383,8 @@ NextLookup:
 	goto Exit;
       }
 
-      FirstRead = FALSE;
-
-      //
-      // Ignore Parent files
-      //
       if (IS_FID_PARENT_FILE (&FileIdentifierDesc)) {
-	goto ReadNextFid;
+	continue;
       }
 
       Status = FileIdentifierDescToFileName (
@@ -413,7 +406,7 @@ NextLookup:
       //
       // Check whether FID's File Identifier contains the expected filename
       //
-      if (StrnCmp (NextFileName, StrAux, StrLen (StrAux)) == 0) {
+      if (StrCmp (NextFileName, StrAux) == 0) {
 #ifdef UDF_DEBUG
 	Print (L"UdfOpen: Found file \'%s\'\n", Str);
 #endif
@@ -424,20 +417,10 @@ NextLookup:
       if (NextFileName) {
 	FreePool ((VOID *)NextFileName);
       }
-
-ReadNextFid:
-      CopyMem (
-	(VOID *)&PrevFileIdentifierDesc,
-	(VOID *)&FileIdentifierDesc,
-	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
-	);
     }
   }
 
   if (Found) {
-    //
-    // Found file
-    //
     if (IsCurrentDir) {
       Status = DuplicatePrivateFileData (PrivFileData, &NewPrivFileData);
       if (EFI_ERROR (Status)) {
@@ -520,10 +503,6 @@ Done:
   }
 
 Exit:
-  if (NextFileName) {
-    FreePool ((VOID *)NextFileName);
-  }
-
 #ifdef UDF_DEBUG
   Print (L"UdfOpen: Done (%r)\n", Status);
 #endif
@@ -571,9 +550,8 @@ UdfRead (
   UINT64                                 BufferOffset;
   UINTN                                  BytesLeft;
   UINTN                                  DirsCount;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR         PrevFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
-  BOOLEAN                                FirstRead;
+  UINT64                                 NextOffset;
   BOOLEAN                                ReadDone;
   UINTN                                  FileInfoLength;
   EFI_FILE_INFO                          *FileInfo;
@@ -735,7 +713,7 @@ ReadFile:
     //
     // Find current directory entry
     //
-    FirstRead = TRUE;
+    NextOffset = 0;
 
     for (;;) {
       Status = ReadDirectory (
@@ -743,9 +721,8 @@ ReadFile:
 	    DiskIo,
 	    PartitionDesc,
 	    ParentFileIdentifierDesc,
-	    &PrevFileIdentifierDesc,
 	    &FileIdentifierDesc,
-	    FirstRead,
+	    &NextOffset,
 	    &ReadDone
 	    );
       if (EFI_ERROR (Status)) {
@@ -756,25 +733,13 @@ ReadFile:
 	break;
       }
 
-      FirstRead = FALSE;
-
-      //
-      // Ignore Parent FID
-      //
       if (IS_FID_PARENT_FILE (&FileIdentifierDesc)) {
-	goto ReadNextFid;
+	continue;
       }
 
       if (!--DirsCount) {
 	break;
       }
-
-ReadNextFid:
-      CopyMem (
-	(VOID *)&PrevFileIdentifierDesc,
-	(VOID *)&FileIdentifierDesc,
-	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
-	);
     }
 
     if (DirsCount) {
@@ -897,7 +862,7 @@ ReadNextFid:
 
     *BufferSize = FileInfoLength;
     Status = EFI_SUCCESS;
-  } else if (IS_FID_DELETED_FILE (&FileIdentifierDesc)) {
+  } else if (IS_FID_DELETED_FILE (ParentFileIdentifierDesc)) {
     Status = EFI_DEVICE_ERROR;
   } else {
     Status = EFI_VOLUME_CORRUPTED;
@@ -1405,9 +1370,12 @@ UdfFlush (
   IN EFI_FILE_PROTOCOL  *This
   )
 {
+#ifdef UDF_DEBUG
   Print (L"UdfFlush: in\n");
+  Print (L"UdfFlush: Done (%r)\n", EFI_WRITE_PROTECTED);
+#endif
 
-  return EFI_UNSUPPORTED;
+  return EFI_WRITE_PROTECTED;
 }
 
 STATIC
@@ -1973,9 +1941,8 @@ ReadDirectory (
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevReadFileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
-  IN BOOLEAN                                FirstRead,
+  IN OUT UINT64                             *NextOffset,
   OUT BOOLEAN                               *ReadDone
   )
 {
@@ -1987,28 +1954,15 @@ ReadDirectory (
   UINT64                                    Offset;
   UINT64                                    EndingPartitionOffset;
   UDF_DESCRIPTOR_TAG                        *DescriptorTag;
-  CHAR16                                    *PrevFileName;
-  CHAR16                                    *FileName;
 
-  Status = EFI_SUCCESS;
-
-  PrevFileName   = NULL;
-  FileName       = NULL;
-  *ReadDone      = FALSE;
+  Status       = EFI_SUCCESS;
+  *ReadDone    = FALSE;
 
   //
   // Check if Parent is _really_ a directory. Otherwise, do nothing.
   //
   if (!IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc)) {
     Status = EFI_NOT_FOUND;
-    goto Exit;
-  }
-
-  Status = FileIdentifierDescToFileName (
-                  PrevReadFileIdentifierDesc,
-		  &PrevFileName
-                  );
-  if (EFI_ERROR (Status)) {
     goto Exit;
   }
 
@@ -2029,7 +1983,11 @@ ReadDirectory (
     (PartitionDesc->PartitionStartingLocation +
      PartitionDesc->PartitionLength) * LOGICAL_BLOCK_SIZE;
 
-  Offset = ParentOffset;
+  if (!*NextOffset) {
+    Offset = ParentOffset;
+  } else {
+    Offset = *NextOffset;
+  }
 
   //
   // Make sure we don't across a partition boundary
@@ -2039,116 +1997,13 @@ ReadDirectory (
     goto Exit;
   }
 
-  //
-  // First FID to be read
-  //
-  if (FirstRead) {
-    goto ReadNextFid;
-  }
-
-#ifdef UDF_DEBUG
-  Print (
-    L"[ReadDirectory] Prev ImpUseLen: %d\n",
-    PrevReadFileIdentifierDesc->LengthOfImplementationUse
-    );
-
-  Print (
-    L"[ReadDirectory] Prev FiLen: %d\n",
-    PrevReadFileIdentifierDesc->LengthOfFileIdentifier
-    );
-#endif
-
-  //
-  // Next FID is not first one of the reading.
-  //
-  do {
-    //
-    // Read FID
-    //
-    Status = DiskIo->ReadDisk (
-                         DiskIo,
-			 BlockIo->Media->MediaId,
-			 Offset,
-			 sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR),
-			 (VOID *)ReadFileIdentifierDesc
-                         );
-    if (EFI_ERROR (Status)) {
-      goto Exit;
-    }
-
-    DescriptorTag = &ReadFileIdentifierDesc->DescriptorTag;
-
-#ifdef UDF_DEBUG
-    Print (
-      L"[ReadDirectory] [FID] Tag Identifier: %d (0x%08x)\n",
-      DescriptorTag->TagIdentifier,
-      DescriptorTag->TagIdentifier
-      );
-#endif
-
-    if (!IS_FID (ReadFileIdentifierDesc)) {
-      goto Exit;
-    }
-
-#ifdef UDF_DEBUG
-    Print (
-      L"[ReadDirectory] Cur ImpUseLen: %d\n",
-      ReadFileIdentifierDesc->LengthOfImplementationUse
-      );
-
-    Print (
-      L"[ReadDirectory] Cur FiLen: %d\n",
-      ReadFileIdentifierDesc->LengthOfFileIdentifier
-      );
-#endif
-
-    FidLength = 38 + // Offset of Implementation Use field
-      ReadFileIdentifierDesc->LengthOfFileIdentifier +
-      ReadFileIdentifierDesc->LengthOfImplementationUse +
-      (4 * ((ReadFileIdentifierDesc->LengthOfFileIdentifier +
-	     ReadFileIdentifierDesc->LengthOfImplementationUse + 38 + 3) / 4) -
-       (ReadFileIdentifierDesc->LengthOfFileIdentifier +
-	ReadFileIdentifierDesc->LengthOfImplementationUse + 38));
-
-#ifdef UDF_DEBUG
-    Print (L"[ReadDirectory] Cur FidLength: %d\n", FidLength);
-#endif
-
-    Status = FileIdentifierDescToFileName (
-                        ReadFileIdentifierDesc,
-			&FileName
-                        );
-    if (EFI_ERROR (Status)) {
-      goto Exit;
-    }
-
-    if (StrnCmp (FileName, PrevFileName, StrLen(PrevFileName)) == 0) {
-      //
-      // Prepare to read FID following the current one
-      //
-      Offset += FidLength;
-      goto ReadNextFid;
-    }
-
-    Offset += FidLength;
-  } while (Offset < EndingPartitionOffset);
-
-  //
-  // End of directory listing
-  //
-  return Status;
-
-ReadNextFid:
-  //
-  // Read FID
-  //
   Status = DiskIo->ReadDisk (
-                       DiskIo,
-		       BlockIo->Media->MediaId,
-		       Offset,
-		       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR),
-		       (VOID *)ReadFileIdentifierDesc
-                       );
+                          DiskIo,
+			  BlockIo->Media->MediaId,
+			  Offset,
+			  sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR),
+			  (VOID *)ReadFileIdentifierDesc
+                          );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
@@ -2157,7 +2012,7 @@ ReadNextFid:
 
 #ifdef UDF_DEBUG
   Print (
-    L"ReadDirectory: [FID] Tag Identifier: %d (0x%08x)\n",
+    L"[ReadDirectory] [FID] Tag Identifier: %d (0x%08x)\n",
     DescriptorTag->TagIdentifier,
     DescriptorTag->TagIdentifier
     );
@@ -2169,21 +2024,34 @@ ReadNextFid:
 
 #ifdef UDF_DEBUG
   Print (
-    L"ReadDirectory: [ReadDirectory] ImpUseLen: %d\n",
+    L"[ReadDirectory] Cur ImpUseLen: %d\n",
     ReadFileIdentifierDesc->LengthOfImplementationUse
     );
 
   Print (
-    L"ReadDirectory: [ReadDirectory] FiLen: %d\n",
+    L"[ReadDirectory] Cur FiLen: %d\n",
     ReadFileIdentifierDesc->LengthOfFileIdentifier
     );
 #endif
 
-  *ReadDone = TRUE;
+  FidLength = 38 + // Offset of Implementation Use field
+    ReadFileIdentifierDesc->LengthOfFileIdentifier +
+    ReadFileIdentifierDesc->LengthOfImplementationUse +
+    (4 * ((ReadFileIdentifierDesc->LengthOfFileIdentifier +
+	   ReadFileIdentifierDesc->LengthOfImplementationUse + 38 + 3) / 4) -
+     (ReadFileIdentifierDesc->LengthOfFileIdentifier +
+      ReadFileIdentifierDesc->LengthOfImplementationUse + 38));
+
+#ifdef UDF_DEBUG
+  Print (L"[ReadDirectory] Cur FidLength: %d\n", FidLength);
+#endif
+
+  *NextOffset   = Offset + FidLength;
+  *ReadDone     = TRUE;
 
 Exit:
 #ifdef UDF_DEBUG
-  Print (L"ReadDirectory: Done (%r)\n", Status);
+  Print (L"ReadDirectory: ReadDone (%d) - Status (%r)\n", *ReadDone, Status);
 #endif
 
   return Status;
@@ -2246,17 +2114,16 @@ GetDirectorySize (
   )
 {
   EFI_STATUS                                Status;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR            PrevFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR            FileIdentifierDesc;
-  BOOLEAN                                   FirstRead;
+  UINT64                                    NextOffset;
   BOOLEAN                                   ReadDone;
   UDF_FILE_ENTRY                            FileEntry;
   UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
   UINT32                                    Lsn;
   UINT64                                    Offset;
 
-  *Size       = 0;
-  FirstRead   = TRUE;
+  NextOffset   = 0;
+  *Size        = 0;
 
   for (;;) {
     Status = ReadDirectory (
@@ -2264,9 +2131,8 @@ GetDirectorySize (
 			DiskIo,
 		        PartitionDesc,
 		        ParentFileIdentifierDesc,
-			&PrevFileIdentifierDesc,
 		        &FileIdentifierDesc,
-			FirstRead,
+			&NextOffset,
 			&ReadDone
 			);
     if (EFI_ERROR (Status)) {
@@ -2277,10 +2143,8 @@ GetDirectorySize (
       break;
     }
 
-    FirstRead = FALSE;
-
     if (IS_FID_PARENT_FILE (&FileIdentifierDesc)) {
-      goto ReadNextFid;
+      continue;
     }
 
     LongAd = &FileIdentifierDesc.Icb;
@@ -2313,13 +2177,6 @@ GetDirectorySize (
     }
 
     *Size += FileEntry.InformationLength;
-
-ReadNextFid:
-    CopyMem (
-      (VOID *)&PrevFileIdentifierDesc,
-      (VOID *)&FileIdentifierDesc,
-      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
-      );
   }
 
 Exit:

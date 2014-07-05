@@ -762,9 +762,8 @@ ReadDirectory (
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
   IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
-  IN BOOLEAN                                FirstRead,
+  IN OUT UINT64                             *NextOffset,
   OUT BOOLEAN                               *ReadDone
   );
 
