@@ -698,11 +698,8 @@ ReadFile:
     BytesLeft      = *BufferSize;
 
     while ((ShortAdsNo--) && (BytesLeft)) {
-      if (ShortAd->ExtentLength > BytesLeft) {
-	//
-	// Truncate it in case of reading beyond the EOF
-	//
-	BytesLeft = ShortAd->ExtentLength;
+      if (ShortAd->ExtentLength - ExtLen > BytesLeft) {
+	BytesLeft = ShortAd->ExtentLength - ExtLen;
       }
 
       Status = DiskIo->ReadDisk (
