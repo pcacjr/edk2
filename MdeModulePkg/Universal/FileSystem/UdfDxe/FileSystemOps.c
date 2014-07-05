@@ -774,11 +774,11 @@ ReadFile:
       goto Exit;
     }
 
-    FileInfo = (EFI_FILE_INFO *) Buffer;
+    FileInfo = (EFI_FILE_INFO *)Buffer;
 
-    FileInfo->Size = FileInfoLength;
-
-    FileInfo->Attribute |= EFI_FILE_READ_ONLY;
+    FileInfo->Size        = FileInfoLength;
+    FileInfo->Attribute   &= ~EFI_FILE_VALID_ATTR;
+    FileInfo->Attribute   |= EFI_FILE_READ_ONLY;
 
     if (IS_FID_DIRECTORY_FILE (&FileIdentifierDesc)) {
 #if 0
@@ -1157,11 +1157,11 @@ UdfGetInfo (
       goto Exit;
     }
 
-    FileInfo = (EFI_FILE_INFO *) Buffer;
+    FileInfo = (EFI_FILE_INFO *)Buffer;
 
-    FileInfo->Size = FileInfoLength;
-
-    FileInfo->Attribute |= EFI_FILE_READ_ONLY;
+    FileInfo->Size         = FileInfoLength;
+    FileInfo->Attribute    &= ~EFI_FILE_VALID_ATTR;
+    FileInfo->Attribute    |= EFI_FILE_READ_ONLY;
 
     if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
 #if 0
