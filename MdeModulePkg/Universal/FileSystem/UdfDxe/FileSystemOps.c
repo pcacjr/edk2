@@ -583,12 +583,29 @@ UdfRead (
   DiskIo                   = PrivFileData->DiskIo;
   FileName                 = NULL;
 
+#ifdef UDF_DEBUG
+  Print (L"UdfRead: BufferSize: %d\n", *BufferSize);
+#endif
+
   if (IS_FID_NORMAL_FILE (ParentFileIdentifierDesc)) {
     //
     // Check if the current position is beyond the EOF
     //
-    if (PrivFileData->FilePosition >= ParentFileEntry->InformationLength) {
+    if (PrivFileData->FilePosition > ParentFileEntry->InformationLength) {
+#ifdef UDF_DEBUG
+      Print (
+	L"UdfRead: FilePosition (%d) - InfoLen (%d)\n",
+	PrivFileData->FilePosition,
+	ParentFileEntry->InformationLength
+	);
+#endif
       Status = EFI_DEVICE_ERROR;
+      goto Exit;
+    } else if (
+      PrivFileData->FilePosition == ParentFileEntry->InformationLength
+      ) {
+      *BufferSize = 0;
+      Status = EFI_SUCCESS;
       goto Exit;
     }
 
