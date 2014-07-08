@@ -27,6 +27,22 @@ UINT8 gOstaCs0CharSetInfo[] = {
   0x72, 0x70, 0x6D, 0x6F, 0x43, 0x20, 0x41, 0x54, 0x53, 0x4F,
 };
 
+#pragma pack(1)
+
+typedef struct {
+  UINT8                      StandardIdentifier[5];
+} UDF_STANDARD_IDENTIFIER;
+
+#pragma pack()
+
+#define STANDARD_IDENTIFIERS_NO   3
+
+UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[STANDARD_IDENTIFIERS_NO] = {
+  { 'B', 'E', 'A', '0', '1' },
+  { 'N', 'S', 'R', '0', '2' },
+  { 'T', 'E', 'A', '0', '1' },
+};
+
 /**
   Open the root directory on a volume.
 
@@ -2268,6 +2284,7 @@ IsSupportedUdfVolume (
 {
   EFI_STATUS                                 Status;
   UDF_NSR_DESCRIPTOR                         NsrDescriptor;
+  UINTN                                      Index;
 
   Status = FindNsrDescriptor (
                           BlockIo,
@@ -2278,16 +2295,22 @@ IsSupportedUdfVolume (
     goto Exit;
   }
 
+  *Supported = FALSE;
+
   if ((NsrDescriptor.StructureType == 0) &&
-      ((NsrDescriptor.StandardIdentifier[0] == 'B') &&
-       (NsrDescriptor.StandardIdentifier[1] == 'E') &&
-       (NsrDescriptor.StandardIdentifier[2] == 'A') &&
-       (NsrDescriptor.StandardIdentifier[3] == '0') &&
-       (NsrDescriptor.StandardIdentifier[4] == '1')) &&
       (NsrDescriptor.StructureVersion == 1)) {
-    *Supported = TRUE;
-  } else {
-    *Supported = FALSE;
+    for (Index = 0; Index < STANDARD_IDENTIFIERS_NO; Index++) {
+      if (CompareMem (
+	    (VOID *)&NsrDescriptor.StandardIdentifier,
+	    (VOID *)&gUdfStandardIdentifiers[Index],
+	    5
+	    )
+	 )
+      {
+	*Supported = TRUE;
+	break;
+      }
+    }
   }
 
 Exit:
