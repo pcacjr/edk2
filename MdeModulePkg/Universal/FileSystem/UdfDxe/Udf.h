@@ -37,7 +37,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DevicePathLib.h>
 
-//#define UDF_DEBUG
+#define UDF_DEBUG
 
 //
 // As specified in ECMA-167 specification, the logical sector size and logical
@@ -465,6 +465,7 @@ typedef struct {
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   EFI_FILE_PROTOCOL                      FileIo;
   UINT64                                 FilePosition;
+  CHAR16                                 *FileName;
 } PRIVATE_UDF_FILE_DATA;
 
 #define PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE SIGNATURE_32 ('u', 'd', 'f', 's')
