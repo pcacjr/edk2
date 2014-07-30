@@ -178,6 +178,7 @@ UdfOpen (
   UINT64                                 Offset;
   CHAR16                                 *FileNameSavedPointer;
   CHAR16                                 *NextFileName;
+  CHAR16                                 *TempFileName;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   BOOLEAN                                Found;
@@ -432,36 +433,46 @@ NextLookup:
 
     FileName = FileNameSavedPointer;
 
-    NewPrivFileData->FileName = AllocatePool (
-                                   ((PrivFileData->FileName ?
-				     StrLen (PrivFileData->FileName) : 0) +
-				    StrLen (FileName)) *
-				   sizeof (CHAR16) +
-				   sizeof (CHAR16) +
-				   sizeof (CHAR16)
+    NewPrivFileData->AbsoluteFileName = AllocatePool (
+                                  ((PrivFileData->AbsoluteFileName ?
+				    StrLen (PrivFileData->AbsoluteFileName) : 0) +
+				   StrLen (FileName)) *
+				  sizeof (CHAR16) +
+				  sizeof (CHAR16) +
+				  sizeof (CHAR16)
                                    );
-    if (!NewPrivFileData->FileName) {
+    if (!NewPrivFileData->AbsoluteFileName) {
       Status = EFI_OUT_OF_RESOURCES;
       goto Exit;
     }
 
-    NewPrivFileData->FileName[0] = '\0';
-    if (PrivFileData->FileName) {
-      StrCat (NewPrivFileData->FileName, PrivFileData->FileName);
+    NewPrivFileData->AbsoluteFileName[0] = '\0';
+    if (PrivFileData->AbsoluteFileName) {
+      StrCat (
+	NewPrivFileData->AbsoluteFileName,
+	PrivFileData->AbsoluteFileName
+	);
+      StrCat (NewPrivFileData->AbsoluteFileName, L"\\");
     }
 
-    StrCat (NewPrivFileData->FileName, L"\\");
+    StrCat (NewPrivFileData->AbsoluteFileName, FileName);
+
+    NewPrivFileData->AbsoluteFileName = MangleFileName (
+                                           NewPrivFileData->AbsoluteFileName
+                                           );
+
+    FileName = NewPrivFileData->AbsoluteFileName;
+    while ((TempFileName = StrStr (FileName, L"\\"))) {
+      FileName = TempFileName + 1;
+    }
+
+    NewPrivFileData->FileName = AllocatePool (
+                                   StrLen (FileName) * sizeof (CHAR16) +
+				   sizeof (CHAR16)
+                                   );
+
+    NewPrivFileData->FileName[0] = L'\0';
     StrCat (NewPrivFileData->FileName, FileName);
-
-    Print (L"UdfOpen: (BEFORE) NewPriv->Filename: %s\n", NewPrivFileData->FileName);
-
-    NewPrivFileData->FileName = MangleFileName (NewPrivFileData->FileName);
-
-    if (NewPrivFileData->FileName[0] == '\\') {
-      NewPrivFileData->FileName++;
-    }
-
-    Print (L"UdfOpen: (AFTER) NewPriv->Filename: %s\n", NewPrivFileData->FileName);
 
     //
     // Find FE of the FID

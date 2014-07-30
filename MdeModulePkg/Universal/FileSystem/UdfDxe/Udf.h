@@ -466,6 +466,7 @@ typedef struct {
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   EFI_FILE_PROTOCOL                      FileIo;
   UINT64                                 FilePosition;
+  CHAR16                                 *AbsoluteFileName;
   CHAR16                                 *FileName;
 } PRIVATE_UDF_FILE_DATA;
 
