@@ -128,6 +128,8 @@ FreeExit:
   return Status;
 }
 
+UINTN gCount = 0;
+
 /**
   Opens a new file relative to the source file's location.
 
@@ -166,6 +168,7 @@ UdfOpen (
   UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
   UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
   UDF_FILE_ENTRY                         FileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         CurFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
   UINT64                                 NextOffset;
@@ -173,7 +176,7 @@ UdfOpen (
   CHAR16                                 *Str;
   CHAR16                                 *StrAux;
   UINT64                                 Offset;
-  CHAR16                                 *FileNameP;
+  CHAR16                                 *FileNameSavedPointer;
   CHAR16                                 *NextFileName;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
@@ -181,7 +184,6 @@ UdfOpen (
   PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
   UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
   UINT32                                 Lsn;
-  BOOLEAN                                IsCurrentDir;
   BOOLEAN                                IsRootDir;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
@@ -199,13 +201,22 @@ UdfOpen (
   FileSetDesc                = &PrivFileData->UdfFileSystemData.FileSetDesc;
 
   CopyMem (
-    (VOID *)&ParentFileIdentifierDesc,
+    (VOID *)&CurFileIdentifierDesc,
     (VOID *)&PrivFileData->UdfFileSystemData.FileIdentifierDesc,
     sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
     );
 
+  Print (L"UdfOpen: (OLD) FileName \'%s\'\n", FileName);
+
+  FileName = MangleFileName (FileName);
+
 #ifdef UDF_DEBUG
   Print (L"UdfOpen: FileName \'%s\'\n", FileName);
+  Print (
+    L"UdfOpen: (THIS: 0x%08x) FileName: %s\n",
+    This,
+    PrivFileData->FileName ? PrivFileData->FileName : L"(null)"
+    );
 #endif
 
   Str = AllocateZeroPool ((StrLen (FileName) + 1) * sizeof (CHAR16));
@@ -214,16 +225,22 @@ UdfOpen (
     goto Exit;
   }
 
-  BlockIo           = PrivFileData->BlockIo;
-  DiskIo            = PrivFileData->DiskIo;
-  Found             = FALSE;
-  NextFileName      = NULL;
-  NewPrivFileData   = NULL;
-  FileNameP         = FileName;
+  BlockIo                = PrivFileData->BlockIo;
+  DiskIo                 = PrivFileData->DiskIo;
+  Found                  = FALSE;
+  NextFileName           = NULL;
+  NewPrivFileData        = NULL;
+  FileNameSavedPointer   = FileName;
 
   CopyMem (
     (VOID *)&FileIdentifierDesc,
+    (VOID *)&CurFileIdentifierDesc,
+    sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+    );
+
+  CopyMem (
     (VOID *)&ParentFileIdentifierDesc,
+    (VOID *)&PrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
     sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
     );
 
@@ -240,12 +257,6 @@ NextLookup:
     if (!*FileName) {
       break;
     }
-
-    //
-    // Discard any trailing whitespaces in the beginning
-    //
-    for ( ; (*FileName) && (*FileName == ' '); FileName++)
-      ;
 
     Offset = 0;
 
@@ -268,12 +279,6 @@ NextLookup:
 
     StrAux = Str;
 
-    //
-    // Discard any trailing whitespaces in the beginning
-    //
-    for ( ; (*StrAux) && (*StrAux == ' '); StrAux++)
-      ;
-
 #ifdef UDF_DEBUG
     Print (
       L"UdfOpen: Start looking up \'%s\' (Length: %d)\n",
@@ -283,7 +288,6 @@ NextLookup:
 #endif
 
     IsRootDir      = FALSE;
-    IsCurrentDir   = FALSE;
     Found          = FALSE;
 
     if (!*StrAux) {
@@ -324,40 +328,11 @@ NextLookup:
 	break;
       }
 
-      //
-      // Ok, we got ".." from the filename. Find Parent FID of the current FID.
-      //
-      LongAd = &FileIdentifierDesc.Icb;
-
-      //
-      // Point to the Parent FID
-      //
-      Lsn = PartitionDesc->PartitionStartingLocation +
-               LongAd->ExtentLocation.LogicalBlockNumber + 1;
-
-      //
-      // Calculate offset of the Parent FID
-      //
-      Offset = Lsn * LOGICAL_BLOCK_SIZE;
-
-      //
-      // Read FID
-      //
-      Status = DiskIo->ReadDisk (
-                           DiskIo,
-			   BlockIo->Media->MediaId,
-			   Offset,
-			   sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR),
-			   (VOID *)&FileIdentifierDesc
-                           );
-      if (EFI_ERROR (Status)) {
-	goto Exit;
-      }
-
-      if (!IS_FID (&FileIdentifierDesc)) {
-	Status = EFI_VOLUME_CORRUPTED;
-	goto Exit;
-      }
+      CopyMem (
+	(VOID *)&FileIdentifierDesc,
+	(VOID *)&ParentFileIdentifierDesc,
+	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+	);
 
       Found = TRUE;
       continue;
@@ -366,7 +341,6 @@ NextLookup:
       Print (L"UdfOpen: Found file \'%s\'\n", Str);
 #endif
       Found = TRUE;
-      IsCurrentDir = TRUE;
       continue;
     }
 
@@ -374,7 +348,7 @@ NextLookup:
     // Start lookup
     //
     CopyMem (
-      (VOID *)&ParentFileIdentifierDesc,
+      (VOID *)&CurFileIdentifierDesc,
       (VOID *)&FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
@@ -386,7 +360,7 @@ NextLookup:
                           BlockIo,
 			  DiskIo,
 			  PartitionDesc,
-			  &ParentFileIdentifierDesc,
+			  &CurFileIdentifierDesc,
 			  &FileIdentifierDesc,
 			  &NextOffset,
 			  &ReadDone
@@ -427,6 +401,12 @@ NextLookup:
 #ifdef UDF_DEBUG
 	Print (L"UdfOpen: Found file \'%s\'\n", Str);
 #endif
+	CopyMem (
+	  (VOID *)&ParentFileIdentifierDesc,
+	  (VOID *)&CurFileIdentifierDesc,
+	  sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+	  );
+
 	Found = TRUE;
 	goto NextLookup;
       }
@@ -438,35 +418,6 @@ NextLookup:
   }
 
   if (Found) {
-    for ( ; (*FileNameP) && (*FileNameP == '\\'); FileNameP++)
-      ;
-
-    if (IsCurrentDir) {
-      Status = DuplicatePrivateFileData (PrivFileData, &NewPrivFileData);
-      if (EFI_ERROR (Status)) {
-	goto Exit;
-      }
-
-      NewPrivFileData->FileName = AllocatePool (
-	                             (PrivFileData->FileName ?
-				      StrLen (PrivFileData->FileName) : 0) *
-				     sizeof (CHAR16) +
-				     sizeof (CHAR16)
-	                             );
-      if (!NewPrivFileData->FileName) {
-	Status = EFI_OUT_OF_RESOURCES;
-	goto Exit;
-      }
-
-      NewPrivFileData->FileName[0] = '\0';
-      if (PrivFileData->FileName) {
-	StrCat (NewPrivFileData->FileName, PrivFileData->FileName);
-      }
-
-      Status = EFI_SUCCESS;
-      goto Done;
-    }
-
     NewPrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
     if (!NewPrivFileData) {
       Status = EFI_OUT_OF_RESOURCES;
@@ -479,14 +430,12 @@ NextLookup:
       sizeof (PRIVATE_UDF_FILE_DATA)
       );
 
-    if (IsRootDir) {
-      goto HandleRootDir;
-    }
+    FileName = FileNameSavedPointer;
 
     NewPrivFileData->FileName = AllocatePool (
                                    ((PrivFileData->FileName ?
 				     StrLen (PrivFileData->FileName) : 0) +
-				    StrLen (FileNameP)) *
+				    StrLen (FileName)) *
 				   sizeof (CHAR16) +
 				   sizeof (CHAR16) +
 				   sizeof (CHAR16)
@@ -499,10 +448,20 @@ NextLookup:
     NewPrivFileData->FileName[0] = '\0';
     if (PrivFileData->FileName) {
       StrCat (NewPrivFileData->FileName, PrivFileData->FileName);
-      StrCat (NewPrivFileData->FileName, L"\\");
     }
 
-    StrCat (NewPrivFileData->FileName, FileNameP);
+    StrCat (NewPrivFileData->FileName, L"\\");
+    StrCat (NewPrivFileData->FileName, FileName);
+
+    Print (L"UdfOpen: (BEFORE) NewPriv->Filename: %s\n", NewPrivFileData->FileName);
+
+    NewPrivFileData->FileName = MangleFileName (NewPrivFileData->FileName);
+
+    if (NewPrivFileData->FileName[0] == '\\') {
+      NewPrivFileData->FileName++;
+    }
+
+    Print (L"UdfOpen: (AFTER) NewPriv->Filename: %s\n", NewPrivFileData->FileName);
 
     //
     // Find FE of the FID
@@ -536,7 +495,7 @@ NextLookup:
       goto Exit;
     }
 
-HandleRootDir:
+    //HandleRootDir:
     CopyMem (
       (VOID *)&NewPrivFileData->UdfFileSystemData.FileEntry,
       (VOID *)&FileEntry,
@@ -549,15 +508,25 @@ HandleRootDir:
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
 
-Done:
+    CopyMem (
+      (VOID *)&NewPrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
+      (VOID *)&ParentFileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+
+#ifdef UDF_DEBUG
     Print (
       L"UdfOpen: New FileName: %s\n",
       NewPrivFileData->FileName ? NewPrivFileData->FileName : L"(null)"
       );
+#endif
 
     NewPrivFileData->FilePosition = 0;
 
     *NewHandle = &NewPrivFileData->FileIo;
+#ifdef UDF_DEBUG
+    Print (L"UdfOpen: NEW FILE HANDLE: 0x%08x\n", *NewHandle);
+#endif
 
     Status = EFI_SUCCESS;
   } else {
@@ -725,7 +694,7 @@ UdfRead (
     //
     // Find extent which corresponds to the current file's position
     //
-    FilePosition     = 0;
+    FilePosition = 0;
 
     do {
       if (FilePosition + ShortAd->ExtentLength == PrivFileData->FilePosition) {
@@ -1048,6 +1017,14 @@ UdfClose (
 #endif
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+#ifdef UDF_DEBUG
+  Print (
+    L"UdfClose: (THIS: 0x%08x) FileName: %s\n",
+    This,
+    PrivFileData->FileName ? PrivFileData->FileName : L"(null)"
+    );
+#endif
 
   FreePool ((VOID *)PrivFileData);
 
@@ -1381,7 +1358,9 @@ UdfGetInfo (
       FileInfo->FileName[0] = '\0';
     }
 
+#ifdef UDF_DEBUG
     Print (L"UdfGetInfo: FileName: %s\n", FileInfo->FileName);
+#endif
 
     *BufferSize = FileInfoLength;
     Status = EFI_SUCCESS;
@@ -1389,7 +1368,7 @@ UdfGetInfo (
     //
     // Logical Volume Identifier field is 128 bytes long
     //
-    FileSystemInfoLength = 128 + sizeof (EFI_FILE_SYSTEM) + sizeof (CHAR16);
+    FileSystemInfoLength = 128 + sizeof (EFI_FILE_SYSTEM);
 
     if (*BufferSize < FileSystemInfoLength) {
       *BufferSize = FileSystemInfoLength;
@@ -2352,32 +2331,6 @@ IsSupportedUdfVolume (
       }
     }
   }
-
-Exit:
-  return Status;
-}
-
-EFI_STATUS
-DuplicatePrivateFileData (
-  IN PRIVATE_UDF_FILE_DATA                   *PrivFileData,
-  OUT PRIVATE_UDF_FILE_DATA                  **NewPrivFileData
-  )
-{
-  EFI_STATUS                                 Status;
-
-  Status = EFI_SUCCESS;
-
-  *NewPrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
-  if (!*NewPrivFileData) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto Exit;
-  }
-
-  CopyMem (
-    (VOID *)*NewPrivFileData,
-    (VOID *)PrivFileData,
-    sizeof (PRIVATE_UDF_FILE_DATA)
-    );
 
 Exit:
   return Status;

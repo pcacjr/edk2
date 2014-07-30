@@ -458,6 +458,7 @@ typedef struct {
     UDF_FILE_SET_DESCRIPTOR                FileSetDesc;
     UDF_FILE_ENTRY                         FileEntry;
     UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+    UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
   } UdfFileSystemData;
 
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
@@ -795,18 +796,17 @@ IsSupportedUdfVolume (
   );
 
 EFI_STATUS
-DuplicatePrivateFileData (
-  IN PRIVATE_UDF_FILE_DATA                   *PrivFileData,
-  OUT PRIVATE_UDF_FILE_DATA                  **NewPrivFileData
-  );
-
-EFI_STATUS
 FindFileIdentifierDescriptorRootDir (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
   IN UDF_PARTITION_DESCRIPTOR                *PartitionDesc,
   IN UDF_FILE_SET_DESCRIPTOR                 *FileSetDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
+  );
+
+CHAR16 *
+MangleFileName (
+  CHAR16           *FileName
   );
 
 /**
