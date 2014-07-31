@@ -129,12 +129,6 @@ UdfDriverBindingStart (
   EFI_DISK_IO_PROTOCOL            *DiskIo;
   BOOLEAN                         IsUdfVolume;
   PRIVATE_UDF_SIMPLE_FS_DATA      *PrivFsData;
-#if 0
-  EFI_FILE_PROTOCOL               *Root;
-  EFI_FILE_PROTOCOL               *NewRoot;
-#endif
-  //UINT8                           Buffer[4096];
-  //UINT32                          BufferSize;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -200,14 +194,6 @@ UdfDriverBindingStart (
 
   PrivFsData->SimpleFs.Revision   = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
   PrivFsData->SimpleFs.OpenVolume = UdfOpenVolume;
-
-#if 0
-  Status = PrivFsData->SimpleFs.OpenVolume (&PrivFsData->SimpleFs, &Root);
-  ASSERT_EFI_ERROR (Status);
-
-  Status = Root->Open (Root, &NewRoot, L"\\efi", 0, 0);
-  ASSERT_EFI_ERROR (Status);
-#endif
 
   PrivFsData->Handle = NULL;
 
