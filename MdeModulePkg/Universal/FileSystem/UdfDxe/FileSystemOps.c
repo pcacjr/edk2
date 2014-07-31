@@ -128,8 +128,6 @@ FreeExit:
   return Status;
 }
 
-UINTN gCount = 0;
-
 /**
   Opens a new file relative to the source file's location.
 
@@ -948,6 +946,14 @@ UdfClose (
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  if (PrivFileData->AbsoluteFileName) {
+    FreePool ((VOID *)PrivFileData->AbsoluteFileName);
+  }
+
+  if (PrivFileData->FileName) {
+    FreePool ((VOID *)PrivFileData->FileName);
+  }
 
   FreePool ((VOID *)PrivFileData);
 
