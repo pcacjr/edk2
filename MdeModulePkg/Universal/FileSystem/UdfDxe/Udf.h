@@ -37,7 +37,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DevicePathLib.h>
 
-#define UDF_DEBUG
+//#define UDF_DEBUG
 
 //
 // As specified in ECMA-167 specification, the logical sector size and logical
