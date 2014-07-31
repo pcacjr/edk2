@@ -17,7 +17,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 STATIC
 CHAR16 *
 TrimString (
-  CHAR16       *String
+  IN CHAR16    *String
   )
 {
   CHAR16       *TempString;
@@ -37,9 +37,24 @@ TrimString (
 }
 
 STATIC
+VOID
+ReplaceLeft (
+  IN CHAR16         *Destination,
+  IN CONST CHAR16   *Source
+  )
+{
+  CONST CHAR16      *EndString;
+
+  EndString = Source + StrLen (Source);
+  while (Source <= EndString) {
+    *Destination++ = *Source++;
+  }
+}
+
+STATIC
 CHAR16 *
 ExcludeTrailingBackslashes (
-  CHAR16                       *String
+  IN CHAR16                    *String
   )
 {
   CHAR16                       *TempString;
@@ -59,7 +74,7 @@ ExcludeTrailingBackslashes (
   }
 
   if (TempString - 1 > String) {
-    StrnCpy (String + 1, TempString, StrLen (TempString) + 1);
+    ReplaceLeft (String + 1, TempString);
   }
 
   String++;
@@ -70,7 +85,7 @@ Exit:
 
 CHAR16 *
 MangleFileName (
-  CHAR16           *FileName
+  IN CHAR16        *FileName
   )
 {
   CHAR16           *FileNameSavedPointer;
@@ -116,7 +131,7 @@ MangleFileName (
 	case L'\\':
 	  TempFileName = FileName + 1;
 	  TempFileName = ExcludeTrailingBackslashes (TempFileName);
-	  StrnCpy (FileName, TempFileName, StrLen (TempFileName) + 1);
+	  ReplaceLeft (FileName, TempFileName);
 	  break;
 	case '.':
 	  if ((*(FileName - 1) != L'\\') && ((*(FileName + 2) != L'\\') ||
@@ -143,7 +158,7 @@ MangleFileName (
 	    FileName += 2;
 	  } else {
 	    if (*(FileName + 2)) {
-	      StrnCpy (TempFileName, FileName + 3, StrLen (FileName + 3) + 1);
+	      ReplaceLeft (TempFileName, FileName + 3);
 	      if (*(TempFileName - 1) == L'\\') {
 		FileName = TempFileName;
 		ExcludeTrailingBackslashes (TempFileName - 1);
