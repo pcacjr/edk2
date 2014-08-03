@@ -81,15 +81,15 @@ UdfOpenVolume (
   }
 
   Status = FindRootDirectory (
-                          PrivFsData->BlockIo,
-                          PrivFsData->DiskIo,
-			  &PrivFileData->UdfFileSystemData.AnchorPoint,
-			  &PrivFileData->UdfFileSystemData.PartitionDesc,
-			  &PrivFileData->UdfFileSystemData.LogicalVolDesc,
-			  &PrivFileData->UdfFileSystemData.FileSetDesc,
-			  &PrivFileData->UdfFileSystemData.FileEntry,
-			  &PrivFileData->UdfFileSystemData.FileIdentifierDesc
-                          );
+                  PrivFsData->BlockIo,
+		  PrivFsData->DiskIo,
+		  &PrivFileData->UdfFileSystemData.AnchorPoint,
+		  &PrivFileData->UdfFileSystemData.PartitionDesc,
+		  &PrivFileData->UdfFileSystemData.LogicalVolDesc,
+		  &PrivFileData->UdfFileSystemData.FileSetDesc,
+		  &PrivFileData->UdfFileSystemData.Root.FileEntry,
+		  &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc
+                  );
   if (EFI_ERROR (Status)) {
     goto FreeExit;
   }
@@ -111,7 +111,8 @@ UdfOpenVolume (
   PrivFileData->FileIo.SetInfo       = UdfSetInfo;
   PrivFileData->FileIo.Flush         = UdfFlush;
 
-  PrivFileData->FilePosition = 0;
+  PrivFileData->IsRootDirectory   = TRUE;
+  PrivFileData->FilePosition      = 0;
 
   *Root = &PrivFileData->FileIo;
 
@@ -171,8 +172,8 @@ UdfOpen (
   UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
   UINT64                                 NextOffset;
   BOOLEAN                                ReadDone;
-  CHAR16                                 *Str;
-  CHAR16                                 *StrAux;
+  CHAR16                                 *String;
+  CHAR16                                 *TempString;
   UINT64                                 Offset;
   CHAR16                                 *FileNameSavedPointer;
   CHAR16                                 *NextFileName;
@@ -183,9 +184,10 @@ UdfOpen (
   PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
   UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
   UINT32                                 Lsn;
-  BOOLEAN                                IsRootDir;
+  BOOLEAN                                IsRootDirectory;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+  String = NULL;
 
   if ((!This) || (!NewHandle) || (!FileName)) {
     Status = EFI_INVALID_PARAMETER;
@@ -194,21 +196,19 @@ UdfOpen (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  AnchorPoint                = &PrivFileData->UdfFileSystemData.AnchorPoint;
-  PartitionDesc              = &PrivFileData->UdfFileSystemData.PartitionDesc;
-  LogicalVolDesc             = &PrivFileData->UdfFileSystemData.LogicalVolDesc;
-  FileSetDesc                = &PrivFileData->UdfFileSystemData.FileSetDesc;
-
-  CopyMem (
-    (VOID *)&CurFileIdentifierDesc,
-    (VOID *)&PrivFileData->UdfFileSystemData.FileIdentifierDesc,
-    sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
-    );
+  AnchorPoint      = &PrivFileData->UdfFileSystemData.AnchorPoint;
+  PartitionDesc    = &PrivFileData->UdfFileSystemData.PartitionDesc;
+  LogicalVolDesc   = &PrivFileData->UdfFileSystemData.LogicalVolDesc;
+  FileSetDesc      = &PrivFileData->UdfFileSystemData.FileSetDesc;
 
   FileName = MangleFileName (FileName);
+  if ((!FileName) || ((FileName) && (!*FileName))) {
+    Status = EFI_NOT_FOUND;
+    goto Exit;
+  }
 
-  Str = AllocateZeroPool ((StrLen (FileName) + 1) * sizeof (CHAR16));
-  if (!Str) {
+  String = AllocatePool ((StrLen (FileName) + 1) * sizeof (CHAR16));
+  if (!String) {
     Status = EFI_OUT_OF_RESOURCES;
     goto Exit;
   }
@@ -220,15 +220,33 @@ UdfOpen (
   NewPrivFileData        = NULL;
   FileNameSavedPointer   = FileName;
 
+  if (PrivFileData->IsRootDirectory) {
+    CopyMem (
+      (VOID *)&CurFileIdentifierDesc,
+      (VOID *)&PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+    CopyMem (
+      (VOID *)&ParentFileIdentifierDesc,
+      (VOID *)&PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+  } else {
+    CopyMem (
+      (VOID *)&CurFileIdentifierDesc,
+      (VOID *)&PrivFileData->UdfFileSystemData.FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+    CopyMem (
+      (VOID *)&ParentFileIdentifierDesc,
+      (VOID *)&PrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+  }
+
   CopyMem (
     (VOID *)&FileIdentifierDesc,
     (VOID *)&CurFileIdentifierDesc,
-    sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
-    );
-
-  CopyMem (
-    (VOID *)&ParentFileIdentifierDesc,
-    (VOID *)&PrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
     sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
     );
 
@@ -248,53 +266,36 @@ NextLookup:
 
     Offset = 0;
 
-    while ((*FileName) && (*FileName != '\\')) {
+    TempString = String;
+    while ((*FileName) && (*FileName != L'\\')) {
+      *TempString++ = *FileName++;
+    }
+
+    *TempString = L'\0';
+
+    if ((*FileName) && (*FileName == L'\\')) {
+      FileName++;
+    }
+
+    Found             = FALSE;
+    IsRootDirectory   = FALSE;
+
+    if (!*String) {
       CopyMem (
-	(VOID *)((UINT8 *)Str + Offset),
-	(VOID *)FileName,
-	sizeof (CHAR16)
+	(VOID *)&FileIdentifierDesc,
+	(VOID *)&PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc,
+	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
 	);
-
-      Offset += sizeof (CHAR16);
-      FileName++;
-    }
-
-    if ((*FileName) && (*FileName == '\\')) {
-      FileName++;
-    }
-
-    *((UINT8 *)Str + Offset) = '\0';
-
-    StrAux = Str;
-
-    IsRootDir      = FALSE;
-    Found          = FALSE;
-
-    if (!*StrAux) {
-      Status = FindRootDirectory (
-	                      BlockIo,
-			      DiskIo,
-			      AnchorPoint,
-			      PartitionDesc,
-			      LogicalVolDesc,
-			      FileSetDesc,
-			      &FileEntry,
-			      &FileIdentifierDesc
-	                      );
-      if (EFI_ERROR (Status)) {
-	goto Exit;
-      }
-
       if (!*FileName) {
-	IsRootDir = TRUE;
-	Found = TRUE;
+	Found             = TRUE;
+	IsRootDirectory   = TRUE;
 	break;
       } else {
 	continue;
       }
     }
 
-    if (StrCmp (StrAux, L"..") == 0) {
+    if (StrCmp (String, L"..") == 0) {
       //
       // Make sure we're not going to look up Parent FID from a root
       // directory or even if the current FID is not a directory(!)
@@ -312,7 +313,7 @@ NextLookup:
 
       Found = TRUE;
       continue;
-    } else if (StrCmp (StrAux, L".") == 0) {
+    } else if (StrCmp (String, L".") == 0) {
       Found = TRUE;
       continue;
     }
@@ -362,7 +363,7 @@ NextLookup:
       //
       // Check whether FID's File Identifier contains the expected filename
       //
-      if (StrCmp (NextFileName, StrAux) == 0) {
+      if (StrCmp (NextFileName, String) == 0) {
 	CopyMem (
 	  (VOID *)&ParentFileIdentifierDesc,
 	  (VOID *)&CurFileIdentifierDesc,
@@ -391,6 +392,12 @@ NextLookup:
       (VOID *)PrivFileData,
       sizeof (PRIVATE_UDF_FILE_DATA)
       );
+
+    if (IsRootDirectory) {
+      NewPrivFileData->AbsoluteFileName   = NULL;
+      NewPrivFileData->FileName           = NULL;
+      goto HandleRootDirectory;
+    }
 
     FileName = FileNameSavedPointer;
 
@@ -459,34 +466,30 @@ NextLookup:
       goto Exit;
     }
 
-    //
-    // TODO: check if ICB Tag's flags field contain all valid bits set
-    //
     if (!IS_FE (&FileEntry)) {
       Status = EFI_VOLUME_CORRUPTED;
       goto Exit;
     }
 
-    //HandleRootDir:
     CopyMem (
       (VOID *)&NewPrivFileData->UdfFileSystemData.FileEntry,
       (VOID *)&FileEntry,
       sizeof (UDF_FILE_ENTRY)
       );
-
     CopyMem (
       (VOID *)&NewPrivFileData->UdfFileSystemData.FileIdentifierDesc,
       (VOID *)&FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
-
     CopyMem (
       (VOID *)&NewPrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
       (VOID *)&ParentFileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
 
-    NewPrivFileData->FilePosition = 0;
+HandleRootDirectory:
+    NewPrivFileData->IsRootDirectory   = IsRootDirectory;
+    NewPrivFileData->FilePosition      = 0;
 
     *NewHandle = &NewPrivFileData->FileIo;
     Status = EFI_SUCCESS;
@@ -495,6 +498,10 @@ NextLookup:
   }
 
 Exit:
+  if (String) {
+    FreePool ((VOID *)String);
+  }
+
   gBS->RestoreTPL (OldTpl);
 
   return Status;
@@ -559,9 +566,17 @@ UdfRead (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  PartitionDesc            = &PrivFileData->UdfFileSystemData.PartitionDesc;
-  ParentFileEntry          = &PrivFileData->UdfFileSystemData.FileEntry;
-  ParentFileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+  PartitionDesc = &PrivFileData->UdfFileSystemData.PartitionDesc;
+
+  if (PrivFileData->IsRootDirectory) {
+    ParentFileEntry = &PrivFileData->UdfFileSystemData.Root.FileEntry;
+    ParentFileIdentifierDesc =
+            &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc;
+  } else {
+    ParentFileEntry = &PrivFileData->UdfFileSystemData.FileEntry;
+    ParentFileIdentifierDesc =
+            &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+  }
 
   BlockIo                  = PrivFileData->BlockIo;
   DiskIo                   = PrivFileData->DiskIo;
@@ -1078,8 +1093,14 @@ UdfSetPosition (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  FileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
-  FileEntry          = &PrivFileData->UdfFileSystemData.FileEntry;
+  if (PrivFileData->IsRootDirectory) {
+    FileIdentifierDesc =
+            &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc;
+    FileEntry = &PrivFileData->UdfFileSystemData.Root.FileEntry;
+  } else {
+    FileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+    FileEntry = &PrivFileData->UdfFileSystemData.FileEntry;
+  }
 
   if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
     //
@@ -1156,10 +1177,17 @@ UdfGetInfo (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  PartitionDesc            = &PrivFileData->UdfFileSystemData.PartitionDesc;
-  LogicalVolDesc           = &PrivFileData->UdfFileSystemData.LogicalVolDesc;
-  FileEntry                = &PrivFileData->UdfFileSystemData.FileEntry;
-  FileIdentifierDesc       = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+  PartitionDesc    = &PrivFileData->UdfFileSystemData.PartitionDesc;
+  LogicalVolDesc   = &PrivFileData->UdfFileSystemData.LogicalVolDesc;
+
+  if (PrivFileData->IsRootDirectory) {
+    FileEntry = &PrivFileData->UdfFileSystemData.Root.FileEntry;
+    FileIdentifierDesc =
+            &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc;
+  } else {
+    FileEntry = &PrivFileData->UdfFileSystemData.FileEntry;
+    FileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+  }
 
   BlockIo     = PrivFileData->BlockIo;
   DiskIo      = PrivFileData->DiskIo;
