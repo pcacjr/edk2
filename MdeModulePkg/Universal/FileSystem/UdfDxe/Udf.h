@@ -456,6 +456,12 @@ typedef struct {
     UDF_PARTITION_DESCRIPTOR               PartitionDesc;
     UDF_LOGICAL_VOLUME_DESCRIPTOR          LogicalVolDesc;
     UDF_FILE_SET_DESCRIPTOR                FileSetDesc;
+
+    struct {
+      UDF_FILE_ENTRY                         FileEntry;
+      UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+    } Root;
+
     UDF_FILE_ENTRY                         FileEntry;
     UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
     UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
@@ -468,6 +474,7 @@ typedef struct {
   UINT64                                 FilePosition;
   CHAR16                                 *AbsoluteFileName;
   CHAR16                                 *FileName;
+  BOOLEAN                                IsRootDirectory;
 } PRIVATE_UDF_FILE_DATA;
 
 #define PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE SIGNATURE_32 ('u', 'd', 'f', 's')
