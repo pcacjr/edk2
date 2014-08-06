@@ -789,16 +789,6 @@ FileIdentifierDescToFileName (
   );
 
 EFI_STATUS
-EFIAPI
-GetDirectorySize (
-  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
-  OUT UINT64                                *Size
-  );
-
-EFI_STATUS
 IsSupportedUdfVolume (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,

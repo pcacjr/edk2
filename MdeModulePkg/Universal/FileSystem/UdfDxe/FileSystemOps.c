@@ -551,7 +551,6 @@ UdfRead (
   UINTN                                  FileInfoLength;
   EFI_FILE_INFO                          *FileInfo;
   CHAR16                                 *FileName;
-  UINT64                                 FileSize;
   UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
   UINT32                                 Lsn;
   UINT64                                 Offset;
@@ -848,20 +847,8 @@ ReadFile:
     FileInfo->Attribute   |= EFI_FILE_READ_ONLY;
 
     if (IS_FID_DIRECTORY_FILE (&FileIdentifierDesc)) {
-      Status = GetDirectorySize (
-                             BlockIo,
-			     DiskIo,
-			     PartitionDesc,
-			     &FileIdentifierDesc,
-			     &FileSize
-			     );
-      if (EFI_ERROR (Status)) {
-	goto Exit;
-      }
-
       FileInfo->Attribute |= EFI_FILE_DIRECTORY;
     } else if (IS_FID_NORMAL_FILE (&FileIdentifierDesc)) {
-      FileSize = FileEntry.InformationLength;
       FileInfo->Attribute |= EFI_FILE_ARCHIVE;
     }
 
@@ -876,8 +863,8 @@ ReadFile:
       FileInfo->Attribute |= EFI_FILE_SYSTEM;
     }
 
-    FileInfo->FileSize       = FileSize;
-    FileInfo->PhysicalSize   = FileSize;
+    FileInfo->FileSize       = FileEntry.InformationLength;
+    FileInfo->PhysicalSize   = FileEntry.InformationLength;
 
     FileInfo->CreateTime.Year         = FileEntry.AccessTime.Year;
     FileInfo->CreateTime.Month        = FileEntry.AccessTime.Month;
@@ -1166,7 +1153,6 @@ UdfGetInfo (
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
-  UINT64                                 FileSize;
   UINTN                                  FileInfoLength;
   EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
   UDF_CHAR_SPEC                          *CharSpec;
@@ -1212,20 +1198,8 @@ UdfGetInfo (
     FileInfo->Attribute    |= EFI_FILE_READ_ONLY;
 
     if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
-      Status = GetDirectorySize (
-                             BlockIo,
-			     DiskIo,
-			     PartitionDesc,
-			     FileIdentifierDesc,
-			     &FileSize
-			     );
-      if (EFI_ERROR (Status)) {
-	goto Exit;
-      }
-
       FileInfo->Attribute |= EFI_FILE_DIRECTORY;
     } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
-      FileSize = FileEntry->InformationLength;
       FileInfo->Attribute |= EFI_FILE_ARCHIVE;
     }
 
@@ -1240,8 +1214,8 @@ UdfGetInfo (
       FileInfo->Attribute |= EFI_FILE_SYSTEM;
     }
 
-    FileInfo->FileSize       = FileSize;
-    FileInfo->PhysicalSize   = FileSize;
+    FileInfo->FileSize       = FileEntry->InformationLength;
+    FileInfo->PhysicalSize   = FileEntry->InformationLength;
 
     FileInfo->CreateTime.Year         = FileEntry->AccessTime.Year;
     FileInfo->CreateTime.Month        = FileEntry->AccessTime.Month;
@@ -1875,86 +1849,6 @@ FileIdentifierDescToFileName (
   }
 
   *String = '\0';
-
-Exit:
-  return Status;
-}
-
-EFI_STATUS
-EFIAPI
-GetDirectorySize (
-  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
-  OUT UINT64                                *Size
-  )
-{
-  EFI_STATUS                                Status;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR            FileIdentifierDesc;
-  UINT64                                    NextOffset;
-  BOOLEAN                                   ReadDone;
-  UDF_FILE_ENTRY                            FileEntry;
-  UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
-  UINT32                                    Lsn;
-  UINT64                                    Offset;
-
-  NextOffset   = 0;
-  *Size        = 0;
-
-  for (;;) {
-    Status = ReadDirectory (
-                        BlockIo,
-			DiskIo,
-		        PartitionDesc,
-		        ParentFileIdentifierDesc,
-		        &FileIdentifierDesc,
-			&NextOffset,
-			&ReadDone
-			);
-    if (EFI_ERROR (Status)) {
-      goto Exit;
-    }
-
-    if (!ReadDone) {
-      break;
-    }
-
-    if (IS_FID_PARENT_FILE (&FileIdentifierDesc)) {
-      continue;
-    }
-
-    LongAd = &FileIdentifierDesc.Icb;
-
-    Lsn = PartitionDesc->PartitionStartingLocation +
-           LongAd->ExtentLocation.LogicalBlockNumber;
-
-    Offset = Lsn * LOGICAL_BLOCK_SIZE;
-
-    //
-    // Read FE
-    //
-    Status = DiskIo->ReadDisk (
-                         DiskIo,
-			 BlockIo->Media->MediaId,
-			 Offset,
-			 sizeof (UDF_FILE_ENTRY),
-			 (VOID *)&FileEntry
-                         );
-    if (EFI_ERROR (Status)) {
-      goto Exit;
-    }
-
-    //
-    // TODO: check if ICB Tag's flags field contain all valid bits set
-    //
-    if (!IS_FE (&FileEntry)) {
-      Status = EFI_VOLUME_CORRUPTED;
-      goto Exit;
-    }
-
-    *Size += FileEntry.InformationLength;
-  }
 
 Exit:
   return Status;
