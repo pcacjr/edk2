@@ -1511,6 +1511,13 @@ StartMainVolumeDescriptorSequence (
       goto Exit;
     }
 
+    //
+    // Stop VDS when found Terminating Descriptor
+    //
+    if (IS_TD (Buffer)) {
+      break;
+    }
+
     if (IS_PD (Buffer)) {
       CopyMem (
 	(VOID *)PartitionDesc,
