@@ -57,6 +57,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 5)
 #define IS_LVD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 6)
+#define IS_TD(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 8)
 #define IS_FSD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 256)
 #define IS_FE(_Pointer) \
