@@ -1733,7 +1733,6 @@ ReadDirectory (
   UINT64                                    FidLength;
   UINT64                                    Offset;
   UINT64                                    EndingPartitionOffset;
-  UDF_DESCRIPTOR_TAG                        *DescriptorTag;
 
   Status       = EFI_SUCCESS;
   *ReadDone    = FALSE;
@@ -1786,8 +1785,6 @@ ReadDirectory (
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
-
-  DescriptorTag = &ReadFileIdentifierDesc->DescriptorTag;
 
   if (!IS_FID (ReadFileIdentifierDesc)) {
     goto Exit;
