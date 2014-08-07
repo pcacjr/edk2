@@ -246,47 +246,6 @@ typedef struct {
 } UDF_LOGICAL_VOLUME_DESCRIPTOR;
 
 //
-// ECMA 167 3/10.8
-//
-typedef struct {
-  UDF_DESCRIPTOR_TAG                  DescriptorTag;
-  UINT32                              VolumeDescriptorSequenceNumber;
-  UINT32                              NumberOfAllocationDescriptors;
-  UDF_EXTENT_AD                       AllocationDescriptors[0];
-} UDF_UNALLOCATED_SPACE_DESCRIPTOR;
-
-typedef struct {
-  UDF_DESCRIPTOR_TAG                         DescriptorTag;
-  UDF_TIMESTAMP                              RecordingDateAndTime;
-  UINT32                                     IntegrityType;
-  UDF_EXTENT_AD                              NextIntegrityExtent;
-  UINT8                                      LogicalVolumeContentsUse[32];
-  UINT32                                     NumberOfPartitions;
-  UINT32                                     LengthOfImplementationUse; // L_UI
-  UINT32                                     FreeSpaceTable;
-  UINT32                                     SizeTable;
-  UINT8                                      ImplementationUse[0]; // See 2.2.6.4
-} UDF_LOGICAL_VOLUME_INTEGRITY_DESCRIPTOR;
-
-//
-// ECMA 167 3/10.4
-//
-typedef struct {
-  UDF_DESCRIPTOR_TAG                          DescriptorTag;
-  UINT32                                      VolumeDescriptorSequenceNumber;
-  UDF_ENTITY_ID                               ImplementationIdentifier;
-  struct {
-    UDF_CHAR_SPEC    LvICharset;
-    UINT8            LogicalVolumeIdentifier[128];
-    UINT8            LvInfo1[36];
-    UINT8            LvInfo2[36];
-    UINT8            LvInfo3[36];
-    UDF_ENTITY_ID    ImplementationId;
-    UINT8            ImplementationUse[128];
-  } LvInformation;
-} UDF_IMPLEMENTATION_USE_VOLUME_DESCRIPTOR;
-
-//
 // ECMA 167 4/14.1
 //
 typedef struct {
@@ -389,26 +348,6 @@ typedef struct {
 } UDF_FILE_ENTRY;
 
 //
-// ECMA 167 4/14.11
-//
-typedef struct {
-  UDF_DESCRIPTOR_TAG             DescriptorTag;
-  UDF_ICB_TAG                    IcbTag;
-  UINT32                         LengthOfAllocationDescriptors;
-  UINT8                          AllocationDescriptors[0];
-} UDF_UNALLOCATED_SPACE_ENTRY;
-
-//
-// ECMA 167 4/14.12
-//
-typedef struct {
-  UDF_DESCRIPTOR_TAG   DescriptorTag;
-  UINT32               NumberOfBits;
-  UINT32               NumberOfBytes;
-  UINT8                Bitmap[0];
-} UDF_SPACE_BITMAP;
-
-//
 // ECMA 167 4/14.5
 //
 typedef struct {
@@ -416,24 +355,6 @@ typedef struct {
   UINT32                              PreviousAllocationExtentLocation;
   UINT32                              LengthOfAllocationDescriptors;
 } UDF_ALLOCATION_EXTENT_DESCRIPTOR;
-
-//
-// ECMA 167 4/16.1
-//
-typedef struct {
-  UINT8                 ComponentType;
-  UINT8                 LengthOfComponentIdentifier;
-  UINT16                ComponentFileVersionNumber;
-  UINT8                 ComponentIdentifier[0];
-} UDF_PATH_COMPONENT;
-
-//
-// ECMA 167 4/14.15
-//
-typedef struct {
-  UINT64                                  UniqueId;
-  UINT8                                   Reserved[24];
-} UDF_LOGICAL_VOLUME_HEADER_DESCRIPTOR;
 
 #pragma pack()
 
@@ -454,26 +375,29 @@ typedef struct {
   UINTN                                  Signature;
 
   struct {
-    UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   AnchorPoint;
-    UDF_PARTITION_DESCRIPTOR               PartitionDesc;
-    UDF_LOGICAL_VOLUME_DESCRIPTOR          LogicalVolDesc;
-    UDF_FILE_SET_DESCRIPTOR                FileSetDesc;
-
-    struct {
-      UDF_FILE_ENTRY                         FileEntry;
-      UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
-    } Root;
-
+    UINT32                                 StartingLocation;
+    UINT32                                 Length;
+    UINT32                                 AccessType;
+  } Partition;
+  struct {
+    UINT8                                  Identifier[128];
+  } Volume;
+  struct {
     UDF_FILE_ENTRY                         FileEntry;
     UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+  } Root;
+  struct {
     UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
-  } UdfFileSystemData;
+    UDF_FILE_ENTRY                         FileEntry;
+    UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+  } File;
 
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   EFI_FILE_PROTOCOL                      FileIo;
   UINT64                                 FilePosition;
+  UINT64                                 NextEntryOffset;
   CHAR16                                 *AbsoluteFileName;
   CHAR16                                 *FileName;
   BOOLEAN                                IsRootDirectory;
@@ -761,10 +685,8 @@ EFIAPI
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint,
   OUT UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc,
-  OUT UDF_FILE_SET_DESCRIPTOR                *FileSetDesc,
   OUT UDF_FILE_ENTRY                         *FileEntry,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
@@ -774,7 +696,8 @@ EFIAPI
 ReadDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UINT32                                 PartitionStartingLocation,
+  IN UINT32                                 PartitionLength,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
   IN OUT UINT64                             *NextOffset,
