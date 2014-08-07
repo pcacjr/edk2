@@ -69,6 +69,8 @@ UdfOpenVolume (
   EFI_STATUS                             Status;
   PRIVATE_UDF_SIMPLE_FS_DATA             *PrivFsData;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UDF_PARTITION_DESCRIPTOR               PartitionDesc;
+  UDF_LOGICAL_VOLUME_DESCRIPTOR          LogicalVolDesc;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -83,16 +85,26 @@ UdfOpenVolume (
   Status = FindRootDirectory (
                   PrivFsData->BlockIo,
 		  PrivFsData->DiskIo,
-		  &PrivFileData->UdfFileSystemData.AnchorPoint,
-		  &PrivFileData->UdfFileSystemData.PartitionDesc,
-		  &PrivFileData->UdfFileSystemData.LogicalVolDesc,
-		  &PrivFileData->UdfFileSystemData.FileSetDesc,
-		  &PrivFileData->UdfFileSystemData.Root.FileEntry,
-		  &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc
+		  &PartitionDesc,
+		  &LogicalVolDesc,
+		  &PrivFileData->Root.FileEntry,
+		  &PrivFileData->Root.FileIdentifierDesc
                   );
   if (EFI_ERROR (Status)) {
     goto FreeExit;
   }
+
+  PrivFileData->Partition.StartingLocation =
+           PartitionDesc.PartitionStartingLocation;
+  PrivFileData->Partition.Length =
+           PartitionDesc.PartitionLength;
+  PrivFileData->Partition.AccessType = PartitionDesc.AccessType;
+
+  CopyMem (
+    (VOID *)&PrivFileData->Volume.Identifier,
+    (VOID *)&LogicalVolDesc.LogicalVolumeIdentifier,
+    128
+    );
 
   PrivFileData->Signature   = PRIVATE_UDF_FILE_DATA_SIGNATURE;
   PrivFileData->SimpleFs    = This;
@@ -113,6 +125,7 @@ UdfOpenVolume (
 
   PrivFileData->IsRootDirectory   = TRUE;
   PrivFileData->FilePosition      = 0;
+  PrivFileData->NextEntryOffset   = 0;
 
   *Root = &PrivFileData->FileIo;
 
@@ -162,10 +175,8 @@ UdfOpen (
   EFI_TPL                                OldTpl;
   EFI_STATUS                             Status;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint;
-  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
-  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
-  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
+  UINT32                                 PartitionStartingLocation;
+  UINT32                                 PartitionLength;
   UDF_FILE_ENTRY                         FileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         CurFileIdentifierDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
@@ -196,10 +207,8 @@ UdfOpen (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  AnchorPoint      = &PrivFileData->UdfFileSystemData.AnchorPoint;
-  PartitionDesc    = &PrivFileData->UdfFileSystemData.PartitionDesc;
-  LogicalVolDesc   = &PrivFileData->UdfFileSystemData.LogicalVolDesc;
-  FileSetDesc      = &PrivFileData->UdfFileSystemData.FileSetDesc;
+  PartitionStartingLocation   = PrivFileData->Partition.StartingLocation;
+  PartitionLength             = PrivFileData->Partition.Length;
 
   FileName = MangleFileName (FileName);
   if ((!FileName) || ((FileName) && (!*FileName))) {
@@ -223,23 +232,23 @@ UdfOpen (
   if (PrivFileData->IsRootDirectory) {
     CopyMem (
       (VOID *)&CurFileIdentifierDesc,
-      (VOID *)&PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc,
+      (VOID *)&PrivFileData->Root.FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
     CopyMem (
       (VOID *)&ParentFileIdentifierDesc,
-      (VOID *)&PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc,
+      (VOID *)&PrivFileData->Root.FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
   } else {
     CopyMem (
       (VOID *)&CurFileIdentifierDesc,
-      (VOID *)&PrivFileData->UdfFileSystemData.FileIdentifierDesc,
+      (VOID *)&PrivFileData->File.FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
     CopyMem (
       (VOID *)&ParentFileIdentifierDesc,
-      (VOID *)&PrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
+      (VOID *)&PrivFileData->File.ParentFileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
   }
@@ -283,7 +292,7 @@ NextLookup:
     if (!*String) {
       CopyMem (
 	(VOID *)&FileIdentifierDesc,
-	(VOID *)&PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc,
+	(VOID *)&PrivFileData->Root.FileIdentifierDesc,
 	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
 	);
       if (!*FileName) {
@@ -333,7 +342,8 @@ NextLookup:
       Status = ReadDirectory (
                           BlockIo,
 			  DiskIo,
-			  PartitionDesc,
+			  PartitionStartingLocation,
+			  PartitionLength,
 			  &CurFileIdentifierDesc,
 			  &FileIdentifierDesc,
 			  &NextOffset,
@@ -346,10 +356,6 @@ NextLookup:
       if (!ReadDone) {
 	Status = EFI_NOT_FOUND;
 	goto Exit;
-      }
-
-      if (IS_FID_PARENT_FILE (&FileIdentifierDesc)) {
-	continue;
       }
 
       Status = FileIdentifierDescToFileName (
@@ -447,7 +453,7 @@ NextLookup:
     //
     LongAd = &FileIdentifierDesc.Icb;
 
-    Lsn = PartitionDesc->PartitionStartingLocation +
+    Lsn = PartitionStartingLocation +
            LongAd->ExtentLocation.LogicalBlockNumber;
 
     Offset = Lsn * LOGICAL_BLOCK_SIZE;
@@ -472,17 +478,17 @@ NextLookup:
     }
 
     CopyMem (
-      (VOID *)&NewPrivFileData->UdfFileSystemData.FileEntry,
+      (VOID *)&NewPrivFileData->File.FileEntry,
       (VOID *)&FileEntry,
       sizeof (UDF_FILE_ENTRY)
       );
     CopyMem (
-      (VOID *)&NewPrivFileData->UdfFileSystemData.FileIdentifierDesc,
+      (VOID *)&NewPrivFileData->File.FileIdentifierDesc,
       (VOID *)&FileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
     CopyMem (
-      (VOID *)&NewPrivFileData->UdfFileSystemData.ParentFileIdentifierDesc,
+      (VOID *)&NewPrivFileData->File.ParentFileIdentifierDesc,
       (VOID *)&ParentFileIdentifierDesc,
       sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
       );
@@ -490,6 +496,7 @@ NextLookup:
 HandleRootDirectory:
     NewPrivFileData->IsRootDirectory   = IsRootDirectory;
     NewPrivFileData->FilePosition      = 0;
+    NewPrivFileData->NextEntryOffset   = 0;
 
     *NewHandle = &NewPrivFileData->FileIo;
     Status = EFI_SUCCESS;
@@ -532,7 +539,8 @@ UdfRead (
   EFI_TPL                                OldTpl;
   EFI_STATUS                             Status;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
+  UINT32                                 PartitionStartingLocation;
+  UINT32                                 PartitionLength;
   UDF_FILE_ENTRY                         *ParentFileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
@@ -544,9 +552,7 @@ UdfRead (
   UDF_SHORT_ALLOCATION_DESCRIPTOR        *ShortAd;
   UINT64                                 BufferOffset;
   UINTN                                  BytesLeft;
-  UINTN                                  DirsCount;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
-  UINT64                                 NextOffset;
   BOOLEAN                                ReadDone;
   UINTN                                  FileInfoLength;
   EFI_FILE_INFO                          *FileInfo;
@@ -565,16 +571,17 @@ UdfRead (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  PartitionDesc = &PrivFileData->UdfFileSystemData.PartitionDesc;
+  PartitionStartingLocation   = PrivFileData->Partition.StartingLocation;
+  PartitionLength             = PrivFileData->Partition.Length;
 
   if (PrivFileData->IsRootDirectory) {
-    ParentFileEntry = &PrivFileData->UdfFileSystemData.Root.FileEntry;
+    ParentFileEntry = &PrivFileData->Root.FileEntry;
     ParentFileIdentifierDesc =
-            &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc;
+            &PrivFileData->Root.FileIdentifierDesc;
   } else {
-    ParentFileEntry = &PrivFileData->UdfFileSystemData.FileEntry;
+    ParentFileEntry = &PrivFileData->File.FileEntry;
     ParentFileIdentifierDesc =
-            &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+            &PrivFileData->File.FileIdentifierDesc;
   }
 
   BlockIo                  = PrivFileData->BlockIo;
@@ -682,20 +689,6 @@ ReadFile:
     //
     // Found file position through the extents. Now, start reading file.
     //
-#ifdef UDF_DEBUG
-    Print (L"UdfRead: ExtStartOffset:        %d\n", ExtStartOffset);
-    Print (L"UdfRead: ExtLen:                %d\n", ExtLen);
-    Print (L"UdfRead: ShortAdsNo:            %d\n", ShortAdsNo);
-    Print (
-      L"UdfRead: Partition start:            %d\n",
-      PartitionDesc->PartitionStartingLocation
-      );
-    Print (
-      L"UdfRead: Partition size:             %d\n",
-      PartitionDesc->PartitionLength
-      );
-#endif
-
     BufferOffset   = 0;
     BytesLeft      = *BufferSize;
 
@@ -706,22 +699,11 @@ ReadFile:
 	ExtLen = ShortAd->ExtentLength - ExtLen;
       }
 
-#ifdef UDF_DEBUG
-      Print (L"UdfRead: BytesLeft:        %d\n", BytesLeft);
-      Print (L"UdfRead: BufferOffset:     %d\n", BufferOffset);
-      Print (L"UdfRead: File Position:    %d\n", PrivFileData->FilePosition);
-      Print (
-	L"UdfRead: ShortAd: pos (%d) len (%d - %d)\n",
-	ShortAd->ExtentPosition,
-	ShortAd->ExtentLength,
-	ExtLen
-	);
-#endif
       Status = DiskIo->ReadDisk (
                               DiskIo,
 				BlockIo->Media->MediaId,
 				ExtStartOffset +
-				((PartitionDesc->PartitionStartingLocation +
+				((PartitionStartingLocation +
 	                         ShortAd->ExtentPosition) * LOGICAL_BLOCK_SIZE),
 				ExtLen,
 				(VOID *)((UINT8 *)Buffer + BufferOffset)
@@ -739,48 +721,27 @@ ReadFile:
       ShortAd++;
     }
 
-#ifdef UDF_DEBUG
-    Print (L"UdfRead: Read %d bytes from the file\n", *BufferSize);
-#endif
-
     *BufferSize = BufferOffset;
     Status = EFI_SUCCESS;
   } else if (IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc)) {
-    DirsCount = PrivFileData->FilePosition + 1;
-
     //
-    // Find current directory entry
+    // Read next directory entry
     //
-    NextOffset = 0;
-
-    for (;;) {
-      Status = ReadDirectory (
-	    BlockIo,
-	    DiskIo,
-	    PartitionDesc,
-	    ParentFileIdentifierDesc,
-	    &FileIdentifierDesc,
-	    &NextOffset,
-	    &ReadDone
-	    );
-      if (EFI_ERROR (Status)) {
-	goto Exit;
-      }
-
-      if (!ReadDone) {
-	break;
-      }
-
-      if (IS_FID_PARENT_FILE (&FileIdentifierDesc)) {
-	continue;
-      }
-
-      if (!--DirsCount) {
-	break;
-      }
+    Status = ReadDirectory (
+                        BlockIo,
+			DiskIo,
+			PartitionStartingLocation,
+			PartitionLength,
+			ParentFileIdentifierDesc,
+			&FileIdentifierDesc,
+			&PrivFileData->NextEntryOffset,
+			&ReadDone
+                        );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
     }
 
-    if (DirsCount) {
+    if (!ReadDone) {
       //
       // Directory entry not found
       //
@@ -790,7 +751,7 @@ ReadFile:
     }
 
     //
-    // Found current directory entry. Set up EFI_FILE_INFO structure.
+    // Set up EFI_FILE_INFO structure
     //
     Status = FileIdentifierDescToFileName (&FileIdentifierDesc, &FileName);
     if (EFI_ERROR (Status)) {
@@ -803,7 +764,7 @@ ReadFile:
     //
     LongAd = &FileIdentifierDesc.Icb;
 
-    Lsn = PartitionDesc->PartitionStartingLocation +
+    Lsn = PartitionStartingLocation +
       LongAd->ExtentLocation.LogicalBlockNumber;
 
     Offset = Lsn * LOGICAL_BLOCK_SIZE;
@@ -1040,7 +1001,7 @@ UdfGetPosition (
   // position has no meaning and the operation is not supported.
   //
   if (IS_FID_DIRECTORY_FILE (
-	   &PrivFileData->UdfFileSystemData.FileIdentifierDesc
+	   &PrivFileData->File.FileIdentifierDesc
 	   )
     ) {
     Status = EFI_UNSUPPORTED;
@@ -1082,11 +1043,11 @@ UdfSetPosition (
 
   if (PrivFileData->IsRootDirectory) {
     FileIdentifierDesc =
-            &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc;
-    FileEntry = &PrivFileData->UdfFileSystemData.Root.FileEntry;
+            &PrivFileData->Root.FileIdentifierDesc;
+    FileEntry = &PrivFileData->Root.FileEntry;
   } else {
-    FileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
-    FileEntry = &PrivFileData->UdfFileSystemData.FileEntry;
+    FileIdentifierDesc = &PrivFileData->File.FileIdentifierDesc;
+    FileEntry = &PrivFileData->File.FileEntry;
   }
 
   if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
@@ -1146,16 +1107,16 @@ UdfGetInfo (
 {
   EFI_STATUS                             Status;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UINT32                                 PartitionStartingLocation;
+  UINT32                                 PartitionLength;
+  UINT32                                 PartitionAccessType;
   UDF_FILE_ENTRY                         *FileEntry;
   EFI_FILE_INFO                          *FileInfo;
-  UDF_PARTITION_DESCRIPTOR               *PartitionDesc;
-  UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   UINTN                                  FileInfoLength;
   EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
-  UDF_CHAR_SPEC                          *CharSpec;
   UINTN                                  FileSystemInfoLength;
   CHAR16                                 *String;
   CHAR16                                 *CharP;
@@ -1163,16 +1124,17 @@ UdfGetInfo (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  PartitionDesc    = &PrivFileData->UdfFileSystemData.PartitionDesc;
-  LogicalVolDesc   = &PrivFileData->UdfFileSystemData.LogicalVolDesc;
+  PartitionStartingLocation   = PrivFileData->Partition.StartingLocation;
+  PartitionLength             = PrivFileData->Partition.Length;
+  PartitionAccessType         = PrivFileData->Partition.AccessType;
 
   if (PrivFileData->IsRootDirectory) {
-    FileEntry = &PrivFileData->UdfFileSystemData.Root.FileEntry;
+    FileEntry = &PrivFileData->Root.FileEntry;
     FileIdentifierDesc =
-            &PrivFileData->UdfFileSystemData.Root.FileIdentifierDesc;
+            &PrivFileData->Root.FileIdentifierDesc;
   } else {
-    FileEntry = &PrivFileData->UdfFileSystemData.FileEntry;
-    FileIdentifierDesc = &PrivFileData->UdfFileSystemData.FileIdentifierDesc;
+    FileEntry = &PrivFileData->File.FileEntry;
+    FileIdentifierDesc = &PrivFileData->File.FileIdentifierDesc;
   }
 
   BlockIo     = PrivFileData->BlockIo;
@@ -1276,28 +1238,10 @@ UdfGetInfo (
 
     FileSystemInfo = (EFI_FILE_SYSTEM_INFO *)Buffer;
 
-    //
-    // The encoding character set should be in "OSTA CS0". See OSTA UDF 2.1.2.
-    //
-    CharSpec = &LogicalVolDesc->DescriptorCharacterSet;
-
-    if ((CharSpec->CharacterSetType != 0) ||
-	(!CompareMem (
-	     (VOID *)&CharSpec->CharacterSetInfo,
-	     (VOID *)&gOstaCs0CharSetInfo,
-	     sizeof (gOstaCs0CharSetInfo)
-	     )
-	)
-      )
-    {
-      Status = EFI_VOLUME_CORRUPTED;
-      goto Exit;
-    }
-
     String = (CHAR16 *)&FileSystemInfo->VolumeLabel[0];
 
     for (Index = 0; Index < 128; Index += 2) {
-      CharP = (CHAR16 *)&LogicalVolDesc->LogicalVolumeIdentifier[Index];
+      CharP = (CHAR16 *)&PrivFileData->Volume.Identifier[Index];
       if (!*CharP) {
 	break;
       }
@@ -1308,10 +1252,9 @@ UdfGetInfo (
     *String = '\0';
 
     FileSystemInfo->Size        = FileSystemInfoLength;
-    FileSystemInfo->ReadOnly    = (BOOLEAN)(PartitionDesc->AccessType == 1);
-    FileSystemInfo->VolumeSize  =
-         (PartitionDesc->PartitionStartingLocation +
-	  PartitionDesc->PartitionLength) * LOGICAL_BLOCK_SIZE;
+    FileSystemInfo->ReadOnly    = (BOOLEAN)(PartitionAccessType == 1);
+    FileSystemInfo->VolumeSize  = (PartitionStartingLocation +
+				   PartitionLength) * LOGICAL_BLOCK_SIZE;
     FileSystemInfo->FreeSpace   = 0;
 
     *BufferSize = FileSystemInfoLength;
@@ -1450,7 +1393,7 @@ StartMainVolumeDescriptorSequence (
   UINT32                                     StartingLsn;
   UINT32                                     EndingLsn;
   UINT8                                      Buffer[LOGICAL_SECTOR_SIZE];
-  UDF_LONG_ALLOCATION_DESCRIPTOR             *LongAd;
+  UDF_CHAR_SPEC                              *CharSpec;
 
   ExtentAd = &AnchorPoint->MainVolumeDescriptorSequenceExtent;
 
@@ -1504,12 +1447,28 @@ StartMainVolumeDescriptorSequence (
 	(VOID *)&Buffer,
 	sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR)
 	);
+
+      //
+      // The encoding character set should be in "OSTA CS0". See OSTA UDF 2.1.2.
+      //
+      CharSpec = &LogicalVolDesc->DescriptorCharacterSet;
+
+      if ((CharSpec->CharacterSetType != 0) ||
+	  (!CompareMem (
+	    (VOID *)&CharSpec->CharacterSetInfo,
+	    (VOID *)&gOstaCs0CharSetInfo,
+	    sizeof (gOstaCs0CharSetInfo)
+	    )
+	    )
+	)
+      {
+	Status = EFI_VOLUME_CORRUPTED;
+	goto Exit;
+      }
     }
 
     StartingLsn++;
   }
-
-  LongAd = &LogicalVolDesc->LogicalVolumeContentsUse;
 
 Exit:
   return Status;
@@ -1555,7 +1514,7 @@ Exit:
 
 STATIC
 EFI_STATUS
-FindFileEntryRootDir (
+FindFileEntryRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
   IN UDF_PARTITION_DESCRIPTOR                *PartitionDesc,
@@ -1600,7 +1559,7 @@ Exit:
 }
 
 EFI_STATUS
-FindFileIdentifierDescriptorRootDir (
+FindFileIdentifierDescriptorRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
   IN UDF_PARTITION_DESCRIPTOR                *PartitionDesc,
@@ -1647,20 +1606,20 @@ EFIAPI
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint,
   OUT UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc,
-  OUT UDF_FILE_SET_DESCRIPTOR                *FileSetDesc,
   OUT UDF_FILE_ENTRY                         *FileEntry,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   )
 {
   EFI_STATUS                                 Status;
+  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER       AnchorPoint;
+  UDF_FILE_SET_DESCRIPTOR                    FileSetDesc;
 
   Status = FindAnchorVolumeDescriptorPointer (
                                           BlockIo,
 					  DiskIo,
-					  AnchorPoint
+					  &AnchorPoint
                                           );
   if (EFI_ERROR (Status)) {
     goto Exit;
@@ -1669,7 +1628,7 @@ FindRootDirectory (
   Status = StartMainVolumeDescriptorSequence (
                                           BlockIo,
 					  DiskIo,
-					  AnchorPoint,
+					  &AnchorPoint,
 					  PartitionDesc,
 					  LogicalVolDesc
                                           );
@@ -1682,30 +1641,30 @@ FindRootDirectory (
 			      DiskIo,
 			      PartitionDesc,
 			      LogicalVolDesc,
-			      FileSetDesc
+			      &FileSetDesc
                               );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
 
-  Status = FindFileEntryRootDir (
-                             BlockIo,
-			     DiskIo,
-			     PartitionDesc,
-			     FileSetDesc,
-			     FileEntry
-                             );
+  Status = FindFileEntryRootDirectory (
+                                   BlockIo,
+				   DiskIo,
+				   PartitionDesc,
+				   &FileSetDesc,
+				   FileEntry
+                                   );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
 
-  Status = FindFileIdentifierDescriptorRootDir (
-                                            BlockIo,
-					    DiskIo,
-					    PartitionDesc,
-					    FileSetDesc,
-					    FileIdentifierDesc
-                                            );
+  Status = FindFileIdentifierDescriptorRootDirectory (
+                                                  BlockIo,
+						  DiskIo,
+						  PartitionDesc,
+						  &FileSetDesc,
+						  FileIdentifierDesc
+                                                  );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
@@ -1719,7 +1678,8 @@ EFIAPI
 ReadDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
+  IN UINT32                                 PartitionStartingLocation,
+  IN UINT32                                 PartitionLength,
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
   IN OUT UINT64                             *NextOffset,
@@ -1750,7 +1710,7 @@ ReadDirectory (
   //
   // Point to the Parent FID
   //
-  Lsn = PartitionDesc->PartitionStartingLocation +
+  Lsn = PartitionStartingLocation +
            LongAd->ExtentLocation.LogicalBlockNumber + 1;
 
   //
@@ -1758,9 +1718,8 @@ ReadDirectory (
   //
   ParentOffset = Lsn * LOGICAL_BLOCK_SIZE;
 
-  EndingPartitionOffset =
-    (PartitionDesc->PartitionStartingLocation +
-     PartitionDesc->PartitionLength) * LOGICAL_BLOCK_SIZE;
+  EndingPartitionOffset = (PartitionStartingLocation +
+			   PartitionLength) * LOGICAL_BLOCK_SIZE;
 
   if (!*NextOffset) {
     Offset = ParentOffset;
