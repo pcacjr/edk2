@@ -27,19 +27,10 @@ UINT8 gOstaCs0CharSetInfo[] = {
   0x72, 0x70, 0x6D, 0x6F, 0x43, 0x20, 0x41, 0x54, 0x53, 0x4F,
 };
 
-#pragma pack(1)
-
-typedef struct {
-  UINT8                      StandardIdentifier[5];
-} UDF_STANDARD_IDENTIFIER;
-
-#pragma pack()
-
-#define STANDARD_IDENTIFIERS_NO   3
-
 UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[STANDARD_IDENTIFIERS_NO] = {
   { 'B', 'E', 'A', '0', '1' },
   { 'N', 'S', 'R', '0', '2' },
+  { 'N', 'S', 'R', '0', '3' },
   { 'T', 'E', 'A', '0', '1' },
 };
 
@@ -1322,31 +1313,6 @@ UdfFlush (
 
 STATIC
 EFI_STATUS
-FindNsrDescriptor (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  OUT UDF_NSR_DESCRIPTOR                     *NsrDescriptor
-  )
-{
-  EFI_STATUS                                 Status;
-
-  Status = DiskIo->ReadDisk (
-                       DiskIo,
-                       BlockIo->Media->MediaId,
-                       NSR_DESCRIPTOR_LSN * LOGICAL_SECTOR_SIZE,
-                       sizeof (UDF_NSR_DESCRIPTOR),
-                       (VOID *)NsrDescriptor
-                       );
-  if (EFI_ERROR (Status)) {
-    goto Exit;
-  }
-
-Exit:
-  return Status;
-}
-
-STATIC
-EFI_STATUS
 FindAnchorVolumeDescriptorPointer (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
@@ -1819,34 +1785,80 @@ IsSupportedUdfVolume (
 {
   EFI_STATUS                                 Status;
   UDF_NSR_DESCRIPTOR                         NsrDescriptor;
-  UINTN                                      Index;
 
-  Status = FindNsrDescriptor (
-                          BlockIo,
-			  DiskIo,
-			  (VOID *)&NsrDescriptor
-                          );
+  *Supported = FALSE;
+
+  //
+  // Start Volume Recognition Sequence
+  //
+  Status = DiskIo->ReadDisk (
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+                       BEA_DESCRIPTOR_LSN * LOGICAL_SECTOR_SIZE,
+                       sizeof (UDF_NSR_DESCRIPTOR),
+                       (VOID *)&NsrDescriptor
+                       );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
 
-  *Supported = FALSE;
-
-  if ((NsrDescriptor.StructureType == 0) &&
-      (NsrDescriptor.StructureVersion == 1)) {
-    for (Index = 0; Index < STANDARD_IDENTIFIERS_NO; Index++) {
-      if (CompareMem (
-	    (VOID *)&NsrDescriptor.StandardIdentifier,
-	    (VOID *)&gUdfStandardIdentifiers[Index],
-	    5
-	    )
-	 )
-      {
-	*Supported = TRUE;
-	break;
-      }
-    }
+  if (CompareMem (
+	(VOID *)&NsrDescriptor.StandardIdentifier,
+	(VOID *)&gUdfStandardIdentifiers[BEA_IDENTIFIER],
+	UDF_STANDARD_IDENTIFIER_LENGTH
+	)
+    ) {
+    goto Exit;
   }
+
+  Status = DiskIo->ReadDisk (
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+                       (BEA_DESCRIPTOR_LSN + 1) * LOGICAL_SECTOR_SIZE,
+                       sizeof (UDF_NSR_DESCRIPTOR),
+                       (VOID *)&NsrDescriptor
+                       );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  if ((CompareMem (
+	 (VOID *)&NsrDescriptor.StandardIdentifier,
+	 (VOID *)&gUdfStandardIdentifiers[VSD_IDENTIFIER_0],
+	 UDF_STANDARD_IDENTIFIER_LENGTH
+	 )
+      ) &&
+      (CompareMem (
+	(VOID *)&NsrDescriptor.StandardIdentifier,
+	(VOID *)&gUdfStandardIdentifiers[VSD_IDENTIFIER_1],
+	UDF_STANDARD_IDENTIFIER_LENGTH
+	)
+      )
+    ) {
+    goto Exit;
+  }
+
+  Status = DiskIo->ReadDisk (
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+                       (BEA_DESCRIPTOR_LSN + 2) * LOGICAL_SECTOR_SIZE,
+                       sizeof (UDF_NSR_DESCRIPTOR),
+                       (VOID *)&NsrDescriptor
+                       );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  if (CompareMem (
+	(VOID *)&NsrDescriptor.StandardIdentifier,
+	(VOID *)&gUdfStandardIdentifiers[TEA_IDENTIFIER],
+	UDF_STANDARD_IDENTIFIER_LENGTH
+	)
+    ) {
+    goto Exit;
+  }
+
+  *Supported = TRUE;
 
 Exit:
   return Status;
