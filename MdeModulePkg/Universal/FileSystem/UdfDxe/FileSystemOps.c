@@ -14,19 +14,6 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
-//
-// OSTA CS0 Character Set
-//
-// The below byte values represent the following ASCII string:
-//        "OSTA Compressed Unicode"
-//
-// Note also that the byte values are stored in litte-endian.
-//
-UINT8 gOstaCs0CharSetInfo[] = {
-  0x65, 0x64, 0x6F, 0x63, 0x69, 0x6E, 0x55, 0x20, 0x64, 0x65, 0x73, 0x73, 0x65,
-  0x72, 0x70, 0x6D, 0x6F, 0x43, 0x20, 0x41, 0x54, 0x53, 0x4F,
-};
-
 UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[STANDARD_IDENTIFIERS_NO] = {
   { 'B', 'E', 'A', '0', '1' },
   { 'N', 'S', 'R', '0', '2' },
@@ -715,8 +702,12 @@ ReadFile:
     *BufferSize = BufferOffset;
     Status = EFI_SUCCESS;
   } else if (IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc)) {
+    if ((!PrivFileData->NextEntryOffset) && (PrivFileData->FilePosition)) {
+      goto NoDirectoryEntriesLeft;
+    }
+
     //
-    // Read next directory entry
+    // Read directory entry
     //
     Status = ReadDirectory (
                         BlockIo,
@@ -736,9 +727,8 @@ ReadFile:
       //
       // Directory entry not found
       //
-      *BufferSize = 0;
-      Status = EFI_SUCCESS;
-      goto Exit;
+      PrivFileData->NextEntryOffset = 0;
+      goto NoDirectoryEntriesLeft;
     }
 
     //
@@ -751,7 +741,7 @@ ReadFile:
     }
 
     //
-    // Find FE of the current directory entry
+    // Find FE of the directory entry
     //
     LongAd = &FileIdentifierDesc.Icb;
 
@@ -783,7 +773,7 @@ ReadFile:
     }
 
     //
-    // Check if BufferSize is too small to read the current directory entry
+    // Check if BufferSize is too small to read directory entry
     //
     FileInfoLength = sizeof (EFI_FILE_INFO) + StrLen (FileName) + 1;
     if (*BufferSize < FileInfoLength) {
@@ -875,6 +865,12 @@ Exit:
     FreePool ((VOID *)FileName);
   }
 
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
+
+NoDirectoryEntriesLeft:
+  *BufferSize = 0;
   gBS->RestoreTPL (OldTpl);
 
   return Status;
@@ -1050,7 +1046,8 @@ UdfSetPosition (
     if (Position != 0) {
       Status = EFI_UNSUPPORTED;
     } else {
-      PrivFileData->FilePosition = Position;
+      PrivFileData->FilePosition      = Position;
+      PrivFileData->NextEntryOffset   = 0;
     }
   } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
     //
@@ -1359,7 +1356,6 @@ StartMainVolumeDescriptorSequence (
   UINT32                                     StartingLsn;
   UINT32                                     EndingLsn;
   UINT8                                      Buffer[LOGICAL_SECTOR_SIZE];
-  UDF_CHAR_SPEC                              *CharSpec;
 
   ExtentAd = &AnchorPoint->MainVolumeDescriptorSequenceExtent;
 
@@ -1413,24 +1409,6 @@ StartMainVolumeDescriptorSequence (
 	(VOID *)&Buffer,
 	sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR)
 	);
-
-      //
-      // The encoding character set should be in "OSTA CS0". See OSTA UDF 2.1.2.
-      //
-      CharSpec = &LogicalVolDesc->DescriptorCharacterSet;
-
-      if ((CharSpec->CharacterSetType != 0) ||
-	  (!CompareMem (
-	    (VOID *)&CharSpec->CharacterSetInfo,
-	    (VOID *)&gOstaCs0CharSetInfo,
-	    sizeof (gOstaCs0CharSetInfo)
-	    )
-	    )
-	)
-      {
-	Status = EFI_VOLUME_CORRUPTED;
-	goto Exit;
-      }
     }
 
     StartingLsn++;
