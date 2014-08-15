@@ -54,17 +54,11 @@
 
 
 [Guids]
-  gEfiPartTypeUnusedGuid                        ## SOMETIMES_CONSUMES ## GUID
-  gEfiPartTypeSystemPartGuid                    ## SOMETIMES_CONSUMES ## Protocol
-  gEfiFileInfoGuid                              ## SOMETIMES_CONSUMES ## GUID
-  gEfiFileSystemInfoGuid                        ## SOMETIMES_CONSUMES ## GUID
+  gEfiFileInfoGuid                              ## SOMETIMES_CONSUMES ## Protocol
+  gEfiFileSystemInfoGuid                        ## SOMETIMES_CONSUMES ## Protocol
 
 [Protocols]
-  gEfiBlockIoProtocolGuid                       ## BY_START
+  gEfiSimpleFileSystemProtocolGuid              ## BY_START
   gEfiDevicePathProtocolGuid                    ## BY_START
-  gEfiSimpleFileSystemProtocolGuid              ## BY_START
-  gEfiDiskIoProtocolGuid                        ## BY_START
   gEfiBlockIoProtocolGuid                       ## TO_START
-  gEfiDevicePathProtocolGuid                    ## TO_START
-  gEfiSimpleFileSystemProtocolGuid              ## BY_START
   gEfiDiskIoProtocolGuid                        ## TO_START

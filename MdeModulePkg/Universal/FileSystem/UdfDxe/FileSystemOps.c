@@ -724,9 +724,6 @@ ReadFile:
     }
 
     if (!ReadDone) {
-      //
-      // Directory entry not found
-      //
       PrivFileData->NextEntryOffset = 0;
       goto NoDirectoryEntriesLeft;
     }

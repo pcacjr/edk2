@@ -135,7 +135,7 @@ UdfDriverBindingStart (
   Status = gBS->OpenProtocol (
                   ControllerHandle,
                   &gEfiBlockIoProtocolGuid,
-                  (VOID **) &BlockIo,
+                  (VOID **)&BlockIo,
                   This->DriverBindingHandle,
                   ControllerHandle,
                   EFI_OPEN_PROTOCOL_GET_PROTOCOL
@@ -147,18 +147,12 @@ UdfDriverBindingStart (
   Status = gBS->OpenProtocol (
                   ControllerHandle,
                   &gEfiDiskIoProtocolGuid,
-                  (VOID **) &DiskIo,
+                  (VOID **)&DiskIo,
                   This->DriverBindingHandle,
                   ControllerHandle,
                   EFI_OPEN_PROTOCOL_BY_DRIVER
                   );
-  if (EFI_ERROR (Status) && Status != EFI_ALREADY_STARTED) {
-    gBS->CloseProtocol (
-          ControllerHandle,
-          &gEfiDevicePathProtocolGuid,
-          This->DriverBindingHandle,
-          ControllerHandle
-          );
+  if (EFI_ERROR (Status) && Status == EFI_ALREADY_STARTED) {
     goto Exit;
   }
 
