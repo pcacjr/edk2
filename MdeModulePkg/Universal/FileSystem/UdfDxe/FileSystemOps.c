@@ -15,10 +15,10 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include "Udf.h"
 
 UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[STANDARD_IDENTIFIERS_NO] = {
-  { 'B', 'E', 'A', '0', '1' },
-  { 'N', 'S', 'R', '0', '2' },
-  { 'N', 'S', 'R', '0', '3' },
-  { 'T', 'E', 'A', '0', '1' },
+  { { 'B', 'E', 'A', '0', '1' } },
+  { { 'N', 'S', 'R', '0', '2' } },
+  { { 'N', 'S', 'R', '0', '3' } },
+  { { 'T', 'E', 'A', '0', '1' } },
 };
 
 /**
@@ -172,7 +172,7 @@ UdfOpen (
   BOOLEAN                                Found;
   PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
   UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
-  UINT32                                 Lsn;
+  UINT64                                 Lsn;
   BOOLEAN                                IsRootDirectory;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
@@ -431,8 +431,8 @@ NextLookup:
     //
     LongAd = &FileIdentifierDesc.Icb;
 
-    Lsn = PartitionStartingLocation +
-           LongAd->ExtentLocation.LogicalBlockNumber;
+    Lsn = (UINT64)(PartitionStartingLocation +
+		   LongAd->ExtentLocation.LogicalBlockNumber);
 
     Offset = Lsn * LOGICAL_BLOCK_SIZE;
 
@@ -536,7 +536,7 @@ UdfRead (
   EFI_FILE_INFO                          *FileInfo;
   CHAR16                                 *FileName;
   UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
-  UINT32                                 Lsn;
+  UINT64                                 Lsn;
   UINT64                                 Offset;
   UDF_FILE_ENTRY                         FileEntry;
 
@@ -632,7 +632,7 @@ UdfRead (
     }
 
     //
-    // Find extent which corresponds to the current file's position
+    // Find which extent corresponds to the current file's position
     //
     FilePosition = 0;
 
@@ -677,15 +677,17 @@ ReadFile:
 	ExtLen = ShortAd->ExtentLength - ExtLen;
       }
 
+      Offset = (UINT64)((UINT64)(PartitionStartingLocation +
+				 ShortAd->ExtentPosition) *
+			LOGICAL_BLOCK_SIZE + ExtStartOffset);
+
       Status = DiskIo->ReadDisk (
                               DiskIo,
-				BlockIo->Media->MediaId,
-				ExtStartOffset +
-				((PartitionStartingLocation +
-	                         ShortAd->ExtentPosition) * LOGICAL_BLOCK_SIZE),
-				ExtLen,
-				(VOID *)((UINT8 *)Buffer + BufferOffset)
-				);
+			      BlockIo->Media->MediaId,
+			      Offset,
+			      ExtLen,
+			      (VOID *)((UINT8 *)Buffer + BufferOffset)
+			      );
       if (EFI_ERROR (Status)) {
 	Status = EFI_DEVICE_ERROR;
 	goto Exit;
@@ -742,8 +744,8 @@ ReadFile:
     //
     LongAd = &FileIdentifierDesc.Icb;
 
-    Lsn = PartitionStartingLocation +
-      LongAd->ExtentLocation.LogicalBlockNumber;
+    Lsn = (UINT64)(PartitionStartingLocation +
+		   LongAd->ExtentLocation.LogicalBlockNumber);
 
     Offset = Lsn * LOGICAL_BLOCK_SIZE;
 
@@ -1238,8 +1240,9 @@ UdfGetInfo (
 
     FileSystemInfo->Size        = FileSystemInfoLength;
     FileSystemInfo->ReadOnly    = (BOOLEAN)(PartitionAccessType == 1);
-    FileSystemInfo->VolumeSize  = (PartitionStartingLocation +
-				   PartitionLength) * LOGICAL_BLOCK_SIZE;
+    FileSystemInfo->VolumeSize  = (UINT64)((UINT64)(PartitionStartingLocation +
+						    PartitionLength) *
+					   LOGICAL_BLOCK_SIZE);
     FileSystemInfo->FreeSpace   = 0;
 
     *BufferSize = FileSystemInfoLength;
@@ -1427,12 +1430,12 @@ FindFileSetDescriptor (
 {
   EFI_STATUS                                 Status;
   UDF_LONG_ALLOCATION_DESCRIPTOR             *LongAd;
-  UINT32                                     Lsn;
+  UINT64                                     Lsn;
 
   LongAd = &LogicalVolDesc->LogicalVolumeContentsUse;
 
-  Lsn = PartitionDesc->PartitionStartingLocation +
-           LongAd->ExtentLocation.LogicalBlockNumber;
+  Lsn = (UINT64)(PartitionDesc->PartitionStartingLocation +
+		 LongAd->ExtentLocation.LogicalBlockNumber);
 
   Status = DiskIo->ReadDisk (
                        DiskIo,
@@ -1465,12 +1468,12 @@ FindFileEntryRootDirectory (
 {
   EFI_STATUS                                 Status;
   UDF_LONG_ALLOCATION_DESCRIPTOR             *LongAd;
-  UINT32                                     Lsn;
+  UINT64                                     Lsn;
 
   LongAd = &FileSetDesc->RootDirectoryIcb;
 
-  Lsn = PartitionDesc->PartitionStartingLocation +
-           LongAd->ExtentLocation.LogicalBlockNumber;
+  Lsn = (UINT64)(PartitionDesc->PartitionStartingLocation +
+		 LongAd->ExtentLocation.LogicalBlockNumber);
 
   Status = DiskIo->ReadDisk (
                        DiskIo,
@@ -1510,7 +1513,7 @@ FindFileIdentifierDescriptorRootDirectory (
 {
   UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
   EFI_STATUS                                 Status;
-  UINT32                                     Lsn;
+  UINT64                                     Lsn;
 
   LongAd = &FileSetDesc->RootDirectoryIcb;
 
@@ -1520,8 +1523,8 @@ FindFileIdentifierDescriptorRootDirectory (
   // For ICB strategy type of 4, the File Identifier Descriptor of the Root
   // Directory immediately follows the File Entry (Root Directory).
   //
-  Lsn = PartitionDesc->PartitionStartingLocation +
-           LongAd->ExtentLocation.LogicalBlockNumber + 1;
+  Lsn = (UINT64)(PartitionDesc->PartitionStartingLocation +
+		 LongAd->ExtentLocation.LogicalBlockNumber + 1);
 
   Status = DiskIo->ReadDisk (
                        DiskIo,
@@ -1629,7 +1632,7 @@ ReadDirectory (
 {
   EFI_STATUS                                Status;
   UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
-  UINT32                                    Lsn;
+  UINT64                                    Lsn;
   UINT64                                    ParentOffset;
   UINT64                                    FidLength;
   UINT64                                    Offset;
@@ -1651,16 +1654,17 @@ ReadDirectory (
   //
   // Point to the Parent FID
   //
-  Lsn = PartitionStartingLocation +
-           LongAd->ExtentLocation.LogicalBlockNumber + 1;
+  Lsn = (UINT64)(PartitionStartingLocation +
+		 LongAd->ExtentLocation.LogicalBlockNumber + 1);
 
   //
   // Calculate offset of the Parent FID
   //
   ParentOffset = Lsn * LOGICAL_BLOCK_SIZE;
 
-  EndingPartitionOffset = (PartitionStartingLocation +
-			   PartitionLength) * LOGICAL_BLOCK_SIZE;
+  EndingPartitionOffset = (UINT64)((UINT64)(PartitionStartingLocation +
+					    PartitionLength) *
+				   LOGICAL_BLOCK_SIZE);
 
   if (!*NextOffset) {
     Offset = ParentOffset;

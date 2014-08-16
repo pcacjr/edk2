@@ -43,8 +43,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 // As specified in ECMA-167 specification, the logical sector size and logical
 // block size shall be 2048 bytes.
 //
-#define LOGICAL_SECTOR_SIZE                   0x800
-#define LOGICAL_BLOCK_SIZE                    0x800
+#define LOGICAL_SECTOR_SIZE                   ((UINT64)0x800ULL)
+#define LOGICAL_BLOCK_SIZE                    ((UINT64)0x800ULL)
 
 #define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
 #define BEA_DESCRIPTOR_LSN                    ((UINT64)0x0000000000000013ULL)
