@@ -49,6 +49,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
 #define BEA_DESCRIPTOR_LSN                    ((UINT64)0x0000000000000013ULL)
 
+#define LOGICAL_VOLUME_IDENTIFIER_LENGTH      128
+
 #define IS_PVD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 1)
 #define IS_AVDP(_Pointer) \
@@ -251,7 +253,7 @@ typedef struct {
   UDF_DESCRIPTOR_TAG               DescriptorTag;
   UINT32                           VolumeDescriptorSequenceNumber;
   UDF_CHAR_SPEC                    DescriptorCharacterSet;
-  UINT8                            LogicalVolumeIdentifier[128];
+  UINT8                            LogicalVolumeIdentifier[LOGICAL_VOLUME_IDENTIFIER_LENGTH];
   UINT32                           LogicalBlockSize;
   UDF_ENTITY_ID                    DomainIdentifier;
   UDF_LONG_ALLOCATION_DESCRIPTOR   LogicalVolumeContentsUse;

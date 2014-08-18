@@ -81,7 +81,7 @@ UdfOpenVolume (
   CopyMem (
     (VOID *)&PrivFileData->Volume.Identifier,
     (VOID *)&LogicalVolDesc.LogicalVolumeIdentifier,
-    128
+    LOGICAL_VOLUME_IDENTIFIER_LENGTH
     );
 
   PrivFileData->Signature   = PRIVATE_UDF_FILE_DATA_SIGNATURE;
@@ -387,7 +387,8 @@ NextLookup:
 
     NewPrivFileData->AbsoluteFileName = AllocatePool (
                                   ((PrivFileData->AbsoluteFileName ?
-				    StrLen (PrivFileData->AbsoluteFileName) : 0) +
+				    StrLen (PrivFileData->AbsoluteFileName) :
+				    0) +
 				   StrLen (FileName)) *
 				  sizeof (CHAR16) +
 				  sizeof (CHAR16) +
