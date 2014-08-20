@@ -150,7 +150,347 @@ UdfOpen (
   IN  UINT64                             Attributes
   )
 {
-  return EFI_DEVICE_ERROR;
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UINT32                                 PartitionStartingLocation;
+  UINT32                                 PartitionLength;
+  UDF_FILE_ENTRY                         FileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         CurFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+  UINT64                                 NextOffset;
+  BOOLEAN                                ReadDone;
+  CHAR16                                 *String;
+  CHAR16                                 *TempString;
+  UINT64                                 Offset;
+  CHAR16                                 *FileNameSavedPointer;
+  CHAR16                                 *NextFileName;
+  CHAR16                                 *TempFileName;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  BOOLEAN                                Found;
+  PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
+  UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
+  UINT64                                 Lsn;
+  BOOLEAN                                IsRootDirectory;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+  String = NULL;
+
+  if ((!This) || (!NewHandle) || (!FileName)) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Exit;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  PartitionStartingLocation   = PrivFileData->Partition.StartingLocation;
+  PartitionLength             = PrivFileData->Partition.Length;
+
+  FileName = MangleFileName (FileName);
+  if ((!FileName) || ((FileName) && (!*FileName))) {
+    Status = EFI_NOT_FOUND;
+    goto Exit;
+  }
+
+  String = AllocatePool ((StrLen (FileName) + 1) * sizeof (CHAR16));
+  if (!String) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Exit;
+  }
+
+  BlockIo                = PrivFileData->BlockIo;
+  DiskIo                 = PrivFileData->DiskIo;
+  Found                  = FALSE;
+  NextFileName           = NULL;
+  NewPrivFileData        = NULL;
+  FileNameSavedPointer   = FileName;
+
+  if (PrivFileData->IsRootDirectory) {
+    CopyMem (
+      (VOID *)&CurFileIdentifierDesc,
+      (VOID *)&PrivFileData->Root.FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+    CopyMem (
+      (VOID *)&ParentFileIdentifierDesc,
+      (VOID *)&PrivFileData->Root.FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+  } else {
+    CopyMem (
+      (VOID *)&CurFileIdentifierDesc,
+      (VOID *)&PrivFileData->File.FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+    CopyMem (
+      (VOID *)&ParentFileIdentifierDesc,
+      (VOID *)&PrivFileData->File.ParentFileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+  }
+
+  CopyMem (
+    (VOID *)&FileIdentifierDesc,
+    (VOID *)&CurFileIdentifierDesc,
+    sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+    );
+
+  for (;;) {
+NextLookup:
+    if (NextFileName) {
+      FreePool ((VOID *)NextFileName);
+      NextFileName = NULL;
+    }
+
+    //
+    // Parse FileName
+    //
+    if (!*FileName) {
+      break;
+    }
+
+    Offset = 0;
+
+    TempString = String;
+    while ((*FileName) && (*FileName != L'\\')) {
+      *TempString++ = *FileName++;
+    }
+
+    *TempString = L'\0';
+
+    if ((*FileName) && (*FileName == L'\\')) {
+      FileName++;
+    }
+
+    Found             = FALSE;
+    IsRootDirectory   = FALSE;
+
+    if (!*String) {
+      CopyMem (
+	(VOID *)&FileIdentifierDesc,
+	(VOID *)&PrivFileData->Root.FileIdentifierDesc,
+	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+	);
+      if (!*FileName) {
+	Found             = TRUE;
+	IsRootDirectory   = TRUE;
+	break;
+      } else {
+	continue;
+      }
+    }
+
+    if (StrCmp (String, L"..") == 0) {
+      //
+      // Make sure we're not going to look up Parent FID from a root
+      // directory or even if the current FID is not a directory(!)
+      //
+      if ((IS_FID_PARENT_FILE (&FileIdentifierDesc)) ||
+	  (!IS_FID_DIRECTORY_FILE (&FileIdentifierDesc))) {
+	break;
+      }
+
+      CopyMem (
+	(VOID *)&FileIdentifierDesc,
+	(VOID *)&ParentFileIdentifierDesc,
+	sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+	);
+
+      Found = TRUE;
+      continue;
+    } else if (StrCmp (String, L".") == 0) {
+      Found = TRUE;
+      continue;
+    }
+
+    //
+    // Start lookup
+    //
+    CopyMem (
+      (VOID *)&CurFileIdentifierDesc,
+      (VOID *)&FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+
+    NextOffset = 0;
+
+    for (;;) {
+      Status = ReadDirectory (
+                          BlockIo,
+			  DiskIo,
+			  PartitionStartingLocation,
+			  PartitionLength,
+			  &CurFileIdentifierDesc,
+			  &FileIdentifierDesc,
+			  &NextOffset,
+			  &ReadDone
+	                  );
+      if (EFI_ERROR (Status)) {
+	goto Exit;
+      }
+
+      if (!ReadDone) {
+	Status = EFI_NOT_FOUND;
+	goto Exit;
+      }
+
+      Status = FileIdentifierDescToFileName (
+                             &FileIdentifierDesc,
+			     &NextFileName
+	                     );
+      if (EFI_ERROR (Status)) {
+	goto Exit;
+      }
+
+      //
+      // Check whether FID's File Identifier contains the expected filename
+      //
+      if (StrCmp (NextFileName, String) == 0) {
+	CopyMem (
+	  (VOID *)&ParentFileIdentifierDesc,
+	  (VOID *)&CurFileIdentifierDesc,
+	  sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+	  );
+
+	Found = TRUE;
+	goto NextLookup;
+      }
+
+      if (NextFileName) {
+	FreePool ((VOID *)NextFileName);
+      }
+    }
+  }
+
+  if (Found) {
+    NewPrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
+    if (!NewPrivFileData) {
+      Status = EFI_OUT_OF_RESOURCES;
+      goto Exit;
+    }
+
+    CopyMem (
+      (VOID *)NewPrivFileData,
+      (VOID *)PrivFileData,
+      sizeof (PRIVATE_UDF_FILE_DATA)
+      );
+
+    if (IsRootDirectory) {
+      NewPrivFileData->AbsoluteFileName   = NULL;
+      NewPrivFileData->FileName           = NULL;
+      goto HandleRootDirectory;
+    }
+
+    FileName = FileNameSavedPointer;
+
+    NewPrivFileData->AbsoluteFileName = AllocatePool (
+                                  ((PrivFileData->AbsoluteFileName ?
+				    StrLen (PrivFileData->AbsoluteFileName) :
+				    0) +
+				   StrLen (FileName)) *
+				  sizeof (CHAR16) +
+				  sizeof (CHAR16) +
+				  sizeof (CHAR16)
+                                   );
+    if (!NewPrivFileData->AbsoluteFileName) {
+      Status = EFI_OUT_OF_RESOURCES;
+      goto Exit;
+    }
+
+    NewPrivFileData->AbsoluteFileName[0] = L'\0';
+    if (PrivFileData->AbsoluteFileName) {
+      StrCat (
+	NewPrivFileData->AbsoluteFileName,
+	PrivFileData->AbsoluteFileName
+	);
+      StrCat (NewPrivFileData->AbsoluteFileName, L"\\");
+    }
+
+    StrCat (NewPrivFileData->AbsoluteFileName, FileName);
+
+    NewPrivFileData->AbsoluteFileName = MangleFileName (
+                                           NewPrivFileData->AbsoluteFileName
+                                           );
+
+    FileName = NewPrivFileData->AbsoluteFileName;
+    while ((TempFileName = StrStr (FileName, L"\\"))) {
+      FileName = TempFileName + 1;
+    }
+
+    NewPrivFileData->FileName = AllocatePool (
+                                   StrLen (FileName) * sizeof (CHAR16) +
+				   sizeof (CHAR16)
+                                   );
+
+    NewPrivFileData->FileName[0] = L'\0';
+    StrCat (NewPrivFileData->FileName, FileName);
+
+    //
+    // Find FE of the FID
+    //
+    LongAd = &FileIdentifierDesc.Icb;
+
+    Lsn = (UINT64)(PartitionStartingLocation +
+		   LongAd->ExtentLocation.LogicalBlockNumber);
+
+    Offset = Lsn * LOGICAL_BLOCK_SIZE;
+
+    //
+    // Read FE
+    //
+    Status = DiskIo->ReadDisk (
+                         DiskIo,
+			 BlockIo->Media->MediaId,
+			 Offset,
+			 sizeof (UDF_FILE_ENTRY),
+			 (VOID *)&FileEntry
+                         );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+
+    if (!IS_FE (&FileEntry)) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    CopyMem (
+      (VOID *)&NewPrivFileData->File.FileEntry,
+      (VOID *)&FileEntry,
+      sizeof (UDF_FILE_ENTRY)
+      );
+    CopyMem (
+      (VOID *)&NewPrivFileData->File.FileIdentifierDesc,
+      (VOID *)&FileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+    CopyMem (
+      (VOID *)&NewPrivFileData->File.ParentFileIdentifierDesc,
+      (VOID *)&ParentFileIdentifierDesc,
+      sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)
+      );
+
+HandleRootDirectory:
+    NewPrivFileData->IsRootDirectory   = IsRootDirectory;
+    NewPrivFileData->FilePosition      = 0;
+    NewPrivFileData->NextEntryOffset   = 0;
+
+    *NewHandle = &NewPrivFileData->FileIo;
+    Status = EFI_SUCCESS;
+  } else {
+    Status = EFI_NOT_FOUND;
+  }
+
+Exit:
+  if (String) {
+    FreePool ((VOID *)String);
+  }
+
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
 }
 
 /**
@@ -192,7 +532,35 @@ UdfClose (
   IN EFI_FILE_PROTOCOL                   *This
   )
 {
-  return EFI_SUCCESS;
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  if (!This) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Exit;
+  }
+
+  Status = EFI_SUCCESS;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  if (PrivFileData->AbsoluteFileName) {
+    FreePool ((VOID *)PrivFileData->AbsoluteFileName);
+  }
+
+  if (PrivFileData->FileName) {
+    FreePool ((VOID *)PrivFileData->FileName);
+  }
+
+  FreePool ((VOID *)PrivFileData);
+
+Exit:
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
 }
 
 /**
@@ -210,6 +578,16 @@ UdfDelete (
   IN EFI_FILE_PROTOCOL  *This
   )
 {
+  PRIVATE_UDF_FILE_DATA *PrivFileData;
+
+  if (!This) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  (VOID)PrivFileData->FileIo.Close(This);
+
   return EFI_WARN_DELETE_FAILURE;
 }
 
@@ -757,6 +1135,144 @@ IsSupportedUdfVolume (
   }
 
   *Supported = TRUE;
+
+Exit:
+  return Status;
+}
+
+EFI_STATUS
+EFIAPI
+ReadDirectory (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 PartitionStartingLocation,
+  IN UINT32                                 PartitionLength,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
+  IN OUT UINT64                             *NextOffset,
+  OUT BOOLEAN                               *ReadDone
+  )
+{
+  EFI_STATUS                                Status;
+  UDF_LONG_ALLOCATION_DESCRIPTOR            *LongAd;
+  UINT64                                    Lsn;
+  UINT64                                    ParentOffset;
+  UINT64                                    FidLength;
+  UINT64                                    Offset;
+  UINT64                                    EndingPartitionOffset;
+
+  Status       = EFI_SUCCESS;
+  *ReadDone    = FALSE;
+
+  //
+  // Check if Parent is _really_ a directory. Otherwise, do nothing.
+  //
+  if (!IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc)) {
+    Status = EFI_NOT_FOUND;
+    goto Exit;
+  }
+
+  LongAd = &ParentFileIdentifierDesc->Icb;
+
+  //
+  // Point to the Parent FID
+  //
+  Lsn = (UINT64)(PartitionStartingLocation +
+		 LongAd->ExtentLocation.LogicalBlockNumber + 1);
+
+  //
+  // Calculate offset of the Parent FID
+  //
+  ParentOffset = Lsn * LOGICAL_BLOCK_SIZE;
+
+  EndingPartitionOffset = (UINT64)((UINT64)(PartitionStartingLocation +
+					    PartitionLength) *
+				   LOGICAL_BLOCK_SIZE);
+
+  if (!*NextOffset) {
+    Offset = ParentOffset;
+  } else {
+    Offset = *NextOffset;
+  }
+
+  //
+  // Make sure we don't across a partition boundary
+  //
+  if (Offset > EndingPartitionOffset) {
+    goto Exit;
+  }
+
+  Status = DiskIo->ReadDisk (
+                          DiskIo,
+			  BlockIo->Media->MediaId,
+			  Offset,
+			  sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR),
+			  (VOID *)ReadFileIdentifierDesc
+                          );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  if (!IS_FID (ReadFileIdentifierDesc)) {
+    goto Exit;
+  }
+
+  FidLength = 38 + // Offset of Implementation Use field
+    ReadFileIdentifierDesc->LengthOfFileIdentifier +
+    ReadFileIdentifierDesc->LengthOfImplementationUse +
+    (4 * ((ReadFileIdentifierDesc->LengthOfFileIdentifier +
+	   ReadFileIdentifierDesc->LengthOfImplementationUse + 38 + 3) / 4) -
+     (ReadFileIdentifierDesc->LengthOfFileIdentifier +
+      ReadFileIdentifierDesc->LengthOfImplementationUse + 38));
+
+  *NextOffset   = Offset + FidLength;
+  *ReadDone     = TRUE;
+
+Exit:
+  return Status;
+}
+
+EFI_STATUS
+EFIAPI
+FileIdentifierDescToFileName (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
+  OUT CHAR16                          **FileName
+  )
+{
+  EFI_STATUS                          Status;
+  CHAR16                              *FileIdentifier;
+  CHAR16                              *String;
+  UINTN                               Index;
+
+  Status = EFI_SUCCESS;
+
+  *FileName = AllocatePool (
+                 FileIdentifierDesc->LengthOfFileIdentifier +
+		 sizeof (CHAR16)
+                 );
+  if (!*FileName) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto Exit;
+  }
+
+  //
+  // +2 == discards the Compression ID found in the File Identifier field
+  //
+  FileIdentifier = (CHAR16 *)(
+     (UINT8 *)&FileIdentifierDesc->Data +
+     FileIdentifierDesc->LengthOfImplementationUse + 2
+     );
+
+  String = *FileName;
+
+  for (Index = 2;
+       Index < FileIdentifierDesc->LengthOfFileIdentifier;
+       Index += 2
+      ) {
+    *String++ = *FileIdentifier++;
+  }
+
+  *String = '\0';
 
 Exit:
   return Status;
