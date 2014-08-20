@@ -515,7 +515,365 @@ UdfRead (
   OUT    VOID                            *Buffer
   )
 {
-  return EFI_DEVICE_ERROR;
+  EFI_TPL                                OldTpl;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UINT32                                 PartitionStartingLocation;
+  UINT32                                 PartitionLength;
+  UDF_FILE_ENTRY                         *ParentFileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINT64                                 FilePosition;
+  INT64                                  ExtStartOffset;
+  UINT32                                 ExtLen;
+  UINT32                                 ShortAdsNo;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR        *ShortAd;
+  UINT64                                 BufferOffset;
+  UINTN                                  BytesLeft;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+  BOOLEAN                                ReadDone;
+  UINTN                                  FileInfoLength;
+  EFI_FILE_INFO                          *FileInfo;
+  CHAR16                                 *FileName;
+  UDF_LONG_ALLOCATION_DESCRIPTOR         *LongAd;
+  UINT64                                 Lsn;
+  UINT64                                 Offset;
+  UDF_FILE_ENTRY                         FileEntry;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  if ((!This) || (!Buffer)) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Exit;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  PartitionStartingLocation   = PrivFileData->Partition.StartingLocation;
+  PartitionLength             = PrivFileData->Partition.Length;
+
+  if (PrivFileData->IsRootDirectory) {
+    ParentFileEntry = &PrivFileData->Root.FileEntry;
+    ParentFileIdentifierDesc =
+            &PrivFileData->Root.FileIdentifierDesc;
+  } else {
+    ParentFileEntry = &PrivFileData->File.FileEntry;
+    ParentFileIdentifierDesc =
+            &PrivFileData->File.FileIdentifierDesc;
+  }
+
+  BlockIo                  = PrivFileData->BlockIo;
+  DiskIo                   = PrivFileData->DiskIo;
+  FileName                 = NULL;
+
+  if (IS_FID_NORMAL_FILE (ParentFileIdentifierDesc)) {
+    //
+    // Check if the current position is beyond the EOF
+    //
+    if (PrivFileData->FilePosition > ParentFileEntry->InformationLength) {
+      Status = EFI_DEVICE_ERROR;
+      goto Exit;
+    } else if (
+      PrivFileData->FilePosition == ParentFileEntry->InformationLength
+      ) {
+      *BufferSize = 0;
+      Status = EFI_SUCCESS;
+      goto Exit;
+    }
+
+    //
+    // File Type should be 5 for a standard byte addressable file
+    //
+    if (ParentFileEntry->IcbTag.FileType != 5) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // The Type of Allocation Descriptor (bit 0-2) in Flags field of ICB Tag
+    // shall be set to 0 which means that Short Allocation Descriptors are used.
+    //
+    if (ParentFileEntry->IcbTag.Flags & 0x07) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // Strategy Type of 4 is the only supported
+    //
+    if (ParentFileEntry->IcbTag.StrategyType != 4) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // OK, now read file's extents to find recorded data.
+    //
+    ShortAdsNo = ParentFileEntry->LengthOfAllocationDescriptors /
+                    sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
+
+    //
+    // NOTE: The total length of a File Entry shall not exceed the size of one
+    // logical block, so it's OK.
+    //
+    ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)(
+                            (UINT8 *)&ParentFileEntry->Data +
+			    ParentFileEntry->LengthOfExtendedAttributes
+                            );
+
+    ExtStartOffset   = 0;
+    ExtLen           = 0;
+
+    if (!PrivFileData->FilePosition) {
+      //
+      // OK. Start reading file from its first extent.
+      //
+      goto ReadFile;
+    }
+
+    //
+    // Find which extent corresponds to the current file's position
+    //
+    FilePosition = 0;
+
+    do {
+      if (FilePosition + ShortAd->ExtentLength == PrivFileData->FilePosition) {
+	break;
+      }
+
+      if (FilePosition + ShortAd->ExtentLength > PrivFileData->FilePosition) {
+	ExtStartOffset =
+	  ShortAd->ExtentLength - ((FilePosition +
+				    ShortAd->ExtentLength) -
+				   PrivFileData->FilePosition);
+	if (ExtStartOffset < 0) {
+	  ExtStartOffset = -(ExtStartOffset);
+	}
+
+	ExtLen = ExtStartOffset;
+	break;
+      }
+
+      FilePosition += ShortAd->ExtentLength;
+      ShortAd++;
+    } while (--ShortAdsNo);
+
+    if (!ShortAdsNo) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+ReadFile:
+    //
+    // Found file position through the extents. Now, start reading file.
+    //
+    BufferOffset   = 0;
+    BytesLeft      = *BufferSize;
+
+    while ((ShortAdsNo--) && (BytesLeft)) {
+      if (ShortAd->ExtentLength - ExtLen > BytesLeft) {
+	ExtLen = BytesLeft;
+      } else {
+	ExtLen = ShortAd->ExtentLength - ExtLen;
+      }
+
+      Offset = (UINT64)((UINT64)(PartitionStartingLocation +
+				 ShortAd->ExtentPosition) *
+			LOGICAL_BLOCK_SIZE + ExtStartOffset);
+
+      Status = DiskIo->ReadDisk (
+                              DiskIo,
+			      BlockIo->Media->MediaId,
+			      Offset,
+			      ExtLen,
+			      (VOID *)((UINT8 *)Buffer + BufferOffset)
+			      );
+      if (EFI_ERROR (Status)) {
+	Status = EFI_DEVICE_ERROR;
+	goto Exit;
+      }
+
+      BytesLeft                    -= ExtLen;
+      BufferOffset                 += ExtLen;
+      PrivFileData->FilePosition   += ExtLen;
+      ExtStartOffset               = 0;
+      ExtLen                       = 0;
+      ShortAd++;
+    }
+
+    *BufferSize = BufferOffset;
+    Status = EFI_SUCCESS;
+  } else if (IS_FID_DIRECTORY_FILE (ParentFileIdentifierDesc)) {
+    if ((!PrivFileData->NextEntryOffset) && (PrivFileData->FilePosition)) {
+      goto NoDirectoryEntriesLeft;
+    }
+
+    //
+    // Read directory entry
+    //
+    Status = ReadDirectory (
+                        BlockIo,
+			DiskIo,
+			PartitionStartingLocation,
+			PartitionLength,
+			ParentFileIdentifierDesc,
+			&FileIdentifierDesc,
+			&PrivFileData->NextEntryOffset,
+			&ReadDone
+                        );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+
+    if (!ReadDone) {
+      PrivFileData->NextEntryOffset = 0;
+      goto NoDirectoryEntriesLeft;
+    }
+
+    //
+    // Set up EFI_FILE_INFO structure
+    //
+    Status = FileIdentifierDescToFileName (&FileIdentifierDesc, &FileName);
+    if (EFI_ERROR (Status)) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // Find FE of the directory entry
+    //
+    LongAd = &FileIdentifierDesc.Icb;
+
+    Lsn = (UINT64)(PartitionStartingLocation +
+		   LongAd->ExtentLocation.LogicalBlockNumber);
+
+    Offset = Lsn * LOGICAL_BLOCK_SIZE;
+
+    //
+    // Read FE
+    //
+    Status = DiskIo->ReadDisk (
+                            DiskIo,
+			    BlockIo->Media->MediaId,
+			    Offset,
+			    sizeof (UDF_FILE_ENTRY),
+			    (VOID *)&FileEntry
+                            );
+    if (EFI_ERROR (Status)) {
+      goto Exit;
+    }
+
+    //
+    // TODO: check if ICB Tag's flags field contain all valid bits set
+    //
+    if (!IS_FE (&FileEntry)) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Exit;
+    }
+
+    //
+    // Check if BufferSize is too small to read directory entry
+    //
+    FileInfoLength = sizeof (EFI_FILE_INFO) + StrLen (FileName) + 1;
+    if (*BufferSize < FileInfoLength) {
+      *BufferSize = FileInfoLength;
+      Status = EFI_BUFFER_TOO_SMALL;
+      goto Exit;
+    }
+
+    FileInfo = (EFI_FILE_INFO *)Buffer;
+
+    FileInfo->Size        = FileInfoLength;
+    FileInfo->Attribute   &= ~EFI_FILE_VALID_ATTR;
+    FileInfo->Attribute   |= EFI_FILE_READ_ONLY;
+
+    if (IS_FID_DIRECTORY_FILE (&FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_DIRECTORY;
+    } else if (IS_FID_NORMAL_FILE (&FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_ARCHIVE;
+    }
+
+    if (IS_FID_HIDDEN_FILE (&FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_HIDDEN;
+    }
+
+    //
+    // Check if file has System bit set (bit 10)
+    //
+    if (FileEntry.IcbTag.Flags & (1 << 10)) {
+      FileInfo->Attribute |= EFI_FILE_SYSTEM;
+    }
+
+    FileInfo->FileSize       = FileEntry.InformationLength;
+    FileInfo->PhysicalSize   = FileEntry.InformationLength;
+
+    FileInfo->CreateTime.Year         = FileEntry.AccessTime.Year;
+    FileInfo->CreateTime.Month        = FileEntry.AccessTime.Month;
+    FileInfo->CreateTime.Day          = FileEntry.AccessTime.Day;
+    FileInfo->CreateTime.Hour         = FileEntry.AccessTime.Hour;
+    FileInfo->CreateTime.Minute       = FileEntry.AccessTime.Second;
+    FileInfo->CreateTime.Second       = FileEntry.AccessTime.Second;
+    FileInfo->CreateTime.Nanosecond   =
+         FileEntry.AccessTime.HundredsOfMicroseconds;
+
+    //
+    // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
+    // structures should be interpreted as Local Time. Use
+    // EFI_UNSPECIFIED_TIMEZONE for Local Time.
+    //
+    FileInfo->CreateTime.TimeZone   = EFI_UNSPECIFIED_TIMEZONE;
+    FileInfo->CreateTime.Daylight   = EFI_TIME_ADJUST_DAYLIGHT;
+
+    //
+    // As per ECMA-167 specification, the Modification Time should be identical
+    // to the content of the Access Time field.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->ModificationTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    //
+    // Since we're accessing a DVD read-only disc - the Last Access Time
+    // field, obviously, should be the same as Create Time.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->LastAccessTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    StrCpy (FileInfo->FileName, FileName);
+
+    //
+    // Update the current position to the next directory entry
+    //
+    PrivFileData->FilePosition++;
+
+    *BufferSize = FileInfoLength;
+    Status = EFI_SUCCESS;
+  } else if (IS_FID_DELETED_FILE (ParentFileIdentifierDesc)) {
+    Status = EFI_DEVICE_ERROR;
+  } else {
+    Status = EFI_VOLUME_CORRUPTED;
+  }
+
+Exit:
+  if (FileName) {
+    FreePool ((VOID *)FileName);
+  }
+
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
+
+NoDirectoryEntriesLeft:
+  *BufferSize = 0;
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
 }
 
 /**
@@ -637,7 +995,30 @@ UdfGetPosition (
   OUT UINT64              *Position
   )
 {
-  return EFI_UNSUPPORTED;
+  EFI_STATUS               Status;
+  PRIVATE_UDF_FILE_DATA   *PrivFileData;
+
+  Status = EFI_SUCCESS;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  //
+  // As per UEFI spec, if the file handle is a directory, then the current file
+  // position has no meaning and the operation is not supported.
+  //
+  if (IS_FID_DIRECTORY_FILE (
+	   &PrivFileData->File.FileIdentifierDesc
+	   )
+    ) {
+    Status = EFI_UNSUPPORTED;
+  } else {
+    //
+    // The file is not a directory. So, return its position.
+    //
+    *Position = PrivFileData->FilePosition;
+  }
+
+  return Status;
 }
 
 /**
@@ -657,7 +1038,51 @@ UdfSetPosition (
   IN UINT64                        Position
   )
 {
-  return EFI_UNSUPPORTED;
+  EFI_STATUS                       Status;
+  PRIVATE_UDF_FILE_DATA            *PrivFileData;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc;
+  UDF_FILE_ENTRY                   *FileEntry;
+
+  Status = EFI_SUCCESS;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  if (PrivFileData->IsRootDirectory) {
+    FileIdentifierDesc =
+            &PrivFileData->Root.FileIdentifierDesc;
+    FileEntry = &PrivFileData->Root.FileEntry;
+  } else {
+    FileIdentifierDesc = &PrivFileData->File.FileIdentifierDesc;
+    FileEntry = &PrivFileData->File.FileEntry;
+  }
+
+  if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+    //
+    // If the file handle is a directory, the _only_ position that may be set is
+    // zero. This has no effect of starting the read proccess of the directory
+    // entries over.
+    //
+    if (Position != 0) {
+      Status = EFI_UNSUPPORTED;
+    } else {
+      PrivFileData->FilePosition      = Position;
+      PrivFileData->NextEntryOffset   = 0;
+    }
+  } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+    //
+    // Seeking to position 0xFFFFFFFFFFFFFFFF causes the current position to be
+    // set to the EOF.
+    //
+    if (Position == 0xFFFFFFFFFFFFFFFF) {
+      PrivFileData->FilePosition = FileEntry->InformationLength - 1;
+    } else {
+      PrivFileData->FilePosition = Position;
+    }
+  } else {
+    Status = EFI_UNSUPPORTED;
+  }
+
+  return Status;
 }
 
 /**
