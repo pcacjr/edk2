@@ -680,6 +680,31 @@ FindFileIdentifierDescriptorRootDir (
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
 
+EFI_STATUS
+EFIAPI
+ReadDirectory (
+  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
+  IN UINT32                                 PartitionStartingLocation,
+  IN UINT32                                 PartitionLength,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
+  IN OUT UINT64                             *NextOffset,
+  OUT BOOLEAN                               *ReadDone
+  );
+
+EFI_STATUS
+EFIAPI
+FileIdentifierDescToFileName (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
+  OUT UINT16                          **FileName
+  );
+
+CHAR16 *
+MangleFileName (
+  CHAR16           *FileName
+  );
+
 /**
   Test to see if this driver supports ControllerHandle. Any ControllerHandle
   than contains a BlockIo and DiskIo protocol can be supported.
