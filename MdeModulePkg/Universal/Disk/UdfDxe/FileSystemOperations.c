@@ -687,7 +687,167 @@ UdfGetInfo (
   OUT    VOID                            *Buffer
   )
 {
-  return EFI_DEVICE_ERROR;
+  EFI_STATUS                             Status;
+  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  UINT32                                 PartitionStartingLocation;
+  UINT32                                 PartitionLength;
+  UINT32                                 PartitionAccessType;
+  UDF_FILE_ENTRY                         *FileEntry;
+  EFI_FILE_INFO                          *FileInfo;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
+  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
+  EFI_DISK_IO_PROTOCOL                   *DiskIo;
+  UINTN                                  FileInfoLength;
+  EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
+  UINTN                                  FileSystemInfoLength;
+  CHAR16                                 *String;
+  CHAR16                                 *CharP;
+  UINTN                                  Index;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  PartitionStartingLocation   = PrivFileData->Partition.StartingLocation;
+  PartitionLength             = PrivFileData->Partition.Length;
+  PartitionAccessType         = PrivFileData->Partition.AccessType;
+
+  if (PrivFileData->IsRootDirectory) {
+    FileEntry = &PrivFileData->Root.FileEntry;
+    FileIdentifierDesc =
+            &PrivFileData->Root.FileIdentifierDesc;
+  } else {
+    FileEntry = &PrivFileData->File.FileEntry;
+    FileIdentifierDesc = &PrivFileData->File.FileIdentifierDesc;
+  }
+
+  BlockIo     = PrivFileData->BlockIo;
+  DiskIo      = PrivFileData->DiskIo;
+
+  if (CompareGuid (InformationType, &gEfiFileInfoGuid)) {
+    //
+    // Check if BufferSize is too small to read the current directory entry
+    //
+    FileInfoLength = sizeof (EFI_FILE_INFO) +
+                     (PrivFileData->FileName ?
+		      StrLen (PrivFileData->FileName) : 0) + sizeof (CHAR16);
+    if (*BufferSize < FileInfoLength) {
+      *BufferSize = FileInfoLength;
+      Status = EFI_BUFFER_TOO_SMALL;
+      goto Exit;
+    }
+
+    FileInfo = (EFI_FILE_INFO *)Buffer;
+
+    FileInfo->Size         = FileInfoLength;
+    FileInfo->Attribute    &= ~EFI_FILE_VALID_ATTR;
+    FileInfo->Attribute    |= EFI_FILE_READ_ONLY;
+
+    if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_DIRECTORY;
+    } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_ARCHIVE;
+    }
+
+    if (IS_FID_HIDDEN_FILE (FileIdentifierDesc)) {
+      FileInfo->Attribute |= EFI_FILE_HIDDEN;
+    }
+
+    //
+    // Check if file has System bit set (bit 10)
+    //
+    if (FileEntry->IcbTag.Flags & (1 << 10)) {
+      FileInfo->Attribute |= EFI_FILE_SYSTEM;
+    }
+
+    FileInfo->FileSize       = FileEntry->InformationLength;
+    FileInfo->PhysicalSize   = FileEntry->InformationLength;
+
+    FileInfo->CreateTime.Year         = FileEntry->AccessTime.Year;
+    FileInfo->CreateTime.Month        = FileEntry->AccessTime.Month;
+    FileInfo->CreateTime.Day          = FileEntry->AccessTime.Day;
+    FileInfo->CreateTime.Hour         = FileEntry->AccessTime.Hour;
+    FileInfo->CreateTime.Minute       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Second       = FileEntry->AccessTime.Second;
+    FileInfo->CreateTime.Nanosecond   =
+         FileEntry->AccessTime.HundredsOfMicroseconds;
+
+    //
+    // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
+    // structures should be interpreted as Local Time. Use
+    // EFI_UNSPECIFIED_TIMEZONE for Local Time.
+    //
+    FileInfo->CreateTime.TimeZone   = EFI_UNSPECIFIED_TIMEZONE;
+    FileInfo->CreateTime.Daylight   = EFI_TIME_ADJUST_DAYLIGHT;
+
+    //
+    // As per ECMA-167 specification, the Modification Time should be identical
+    // to the content of the Access Time field.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->ModificationTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    //
+    // Since we're accessing a DVD read-only disc - the Last Access Time
+    // field, obviously, should be the same as Create Time.
+    //
+    CopyMem (
+      (VOID *)&FileInfo->LastAccessTime,
+      (VOID *)&FileInfo->CreateTime,
+      sizeof (EFI_TIME)
+      );
+
+    if (PrivFileData->FileName) {
+      StrCpy (FileInfo->FileName, PrivFileData->FileName);
+    } else {
+      FileInfo->FileName[0] = '\0';
+    }
+
+    *BufferSize = FileInfoLength;
+    Status = EFI_SUCCESS;
+  } else if (CompareGuid (InformationType, &gEfiFileSystemInfoGuid)) {
+    //
+    // Logical Volume Identifier field is 128 bytes long
+    //
+    FileSystemInfoLength = 128 + sizeof (EFI_FILE_SYSTEM);
+
+    if (*BufferSize < FileSystemInfoLength) {
+      *BufferSize = FileSystemInfoLength;
+      Status = EFI_BUFFER_TOO_SMALL;
+      goto Exit;
+    }
+
+    FileSystemInfo = (EFI_FILE_SYSTEM_INFO *)Buffer;
+
+    String = (CHAR16 *)&FileSystemInfo->VolumeLabel[0];
+
+    for (Index = 0; Index < 128; Index += 2) {
+      CharP = (CHAR16 *)&PrivFileData->Volume.Identifier[Index];
+      if (!*CharP) {
+	break;
+      }
+
+      *String++ = *CharP;
+    }
+
+    *String = '\0';
+
+    FileSystemInfo->Size        = FileSystemInfoLength;
+    FileSystemInfo->ReadOnly    = (BOOLEAN)(PartitionAccessType == 1);
+    FileSystemInfo->VolumeSize  = (UINT64)((UINT64)(PartitionStartingLocation +
+						    PartitionLength) *
+					   LOGICAL_BLOCK_SIZE);
+    FileSystemInfo->FreeSpace   = 0;
+
+    *BufferSize = FileSystemInfoLength;
+    Status = EFI_SUCCESS;
+  } else {
+    Status = EFI_UNSUPPORTED;
+  }
+
+Exit:
+  return Status;
 }
 
 /**
