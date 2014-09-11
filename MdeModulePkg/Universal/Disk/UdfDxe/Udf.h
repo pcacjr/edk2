@@ -38,16 +38,13 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/DevicePathLib.h>
 
 //
-// As specified in ECMA-167 specification, the logical sector size and logical
-// block size shall be 2048 bytes.
+// As specified in ECMA-167 specification, the logical sector size shall be
+// 2048 bytes.
 //
 #define LOGICAL_SECTOR_SIZE                   ((UINT64)0x800ULL)
-#define LOGICAL_BLOCK_SIZE                    ((UINT64)0x800ULL)
 
 #define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
-#define BEA_DESCRIPTOR_LSN                    ((UINT64)0x0000000000000013ULL)
-
-#define LOGICAL_VOLUME_IDENTIFIER_LENGTH      128
+#define BEA_DESCRIPTOR_LSN_OFFSET             ((UINT64)0x8000ULL)
 
 #define IS_PVD(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 1)
@@ -63,6 +60,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 256)
 #define IS_FE(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 261)
+#define IS_EFE(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 266)
 #define IS_FID(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 257)
 
@@ -70,6 +69,10 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
 #define IS_FE_STANDARD_FILE(_Pointer) \
   (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 5)
+#define IS_EFE_DIRECTORY(_Pointer) \
+  (((UDF_EXTENDED_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
+#define IS_EFE_STANDARD_FILE(_Pointer) \
+  (((UDF_EXTENDED_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 5)
 
 #define HIDDEN_FILE                           (1 << 0)
 #define DIRECTORY_FILE                        (1 << 1)
@@ -90,6 +93,12 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
    PARENT_FILE)
 #define IS_FID_NORMAL_FILE(_Pointer) \
   ((!IS_FID_DIRECTORY_FILE (_Pointer)) && (!IS_FID_PARENT_FILE (_Pointer)))
+
+//
+// ECMA 167 4/14.14.1.1
+//
+#define IS_EXTENT_RECORDED(_Icb) \
+    ((((_Icb)->ExtentLength >> 30) && 0xFF) == 0)
 
 #pragma pack(1)
 
@@ -226,7 +235,7 @@ typedef struct {
   UDF_DESCRIPTOR_TAG               DescriptorTag;
   UINT32                           VolumeDescriptorSequenceNumber;
   UDF_CHAR_SPEC                    DescriptorCharacterSet;
-  UINT8                            LogicalVolumeIdentifier[LOGICAL_VOLUME_IDENTIFIER_LENGTH];
+  UINT8                            LogicalVolumeIdentifier[128];
   UINT32                           LogicalBlockSize;
   UDF_ENTITY_ID                    DomainIdentifier;
   UDF_LONG_ALLOCATION_DESCRIPTOR   LogicalVolumeContentsUse;
@@ -281,7 +290,7 @@ typedef struct {
   UINT8                             LengthOfFileIdentifier;
   UDF_LONG_ALLOCATION_DESCRIPTOR    Icb;
   UINT16                            LengthOfImplementationUse;
-  UINT8                             Data[2010];
+  UINT8                             Data[0];
 } UDF_FILE_IDENTIFIER_DESCRIPTOR;
 
 //
@@ -325,8 +334,36 @@ typedef struct {
   UINT64                           UniqueId;
   UINT32                           LengthOfExtendedAttributes;
   UINT32                           LengthOfAllocationDescriptors;
-  UINT8                            Data[1872]; // L_EAs and L_ADs
+  UINT8                            Data[0]; // L_EA + L_AD
 } UDF_FILE_ENTRY;
+
+typedef struct {
+  UDF_DESCRIPTOR_TAG               DescriptorTag;
+  UDF_ICB_TAG                      IcbTag;
+  UINT32                           Uid;
+  UINT32                           Gid;
+  UINT32                           Permissions;
+  UINT16                           FileLinkCount;
+  UINT8                            RecordFormat;
+  UINT8                            RecordDisplayAttributes;
+  UINT32                           RecordLength;
+  UINT64                           InformationLength;
+  UINT64                           ObjectSize;
+  UINT64                           LogicalBlocksRecorded;
+  UDF_TIMESTAMP                    AccessTime;
+  UDF_TIMESTAMP                    ModificationTime;
+  UDF_TIMESTAMP                    CreationTime;
+  UDF_TIMESTAMP                    AttributeTime;
+  UINT32                           CheckPoint;
+  UINT32                           Reserved;
+  UDF_LONG_ALLOCATION_DESCRIPTOR   ExtendedAttributeIcb;
+  UDF_LONG_ALLOCATION_DESCRIPTOR   StreamDirectoryIcb;
+  UDF_ENTITY_ID                    ImplementationIdentifier;
+  UINT64                           UniqueId;
+  UINT32                           LengthOfExtendedAttributes;
+  UINT32                           LengthOfAllocationDescriptors;
+  UINT8                            Data[0]; // L_EA + L_AD
+} UDF_EXTENDED_FILE_ENTRY;
 
 #pragma pack()
 
@@ -347,21 +384,20 @@ typedef struct {
   UINTN                                  Signature;
 
   struct {
-    UINT32                                 StartingLocation;
-    UINT32                                 Length;
-    UINT32                                 AccessType;
-  } Partition;
-  struct {
-    UINT8                                  Identifier[LOGICAL_VOLUME_IDENTIFIER_LENGTH];
+    UDF_LOGICAL_VOLUME_DESCRIPTOR          **LogicalVolDescs;
+    UINTN                                  LogicalVolDescsNo;
+    UDF_PARTITION_DESCRIPTOR               **PartitionDescs;
+    UINTN                                  PartitionDescsNo;
+    UDF_FILE_SET_DESCRIPTOR                **FileSetDescs;
+    UINTN                                  FileSetDescsNo;
   } Volume;
   struct {
-    UDF_FILE_ENTRY                         FileEntry;
-    UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+    VOID                                   *FileEntry;
+    UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
   } Root;
   struct {
-    UDF_FILE_IDENTIFIER_DESCRIPTOR         ParentFileIdentifierDesc;
-    UDF_FILE_ENTRY                         FileEntry;
-    UDF_FILE_IDENTIFIER_DESCRIPTOR         FileIdentifierDesc;
+    VOID                                   *FileEntry;
+    UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
   } File;
 
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
@@ -654,13 +690,12 @@ UdfFlush (
   );
 
 EFI_STATUS
-EFIAPI
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
   OUT UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
   OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc,
-  OUT UDF_FILE_ENTRY                         *FileEntry,
+  OUT VOID                                   *Data,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
 
@@ -672,29 +707,77 @@ IsSupportedUdfVolume (
   );
 
 EFI_STATUS
-FindFileIdentifierDescriptorRootDir (
+ReadVolumeFileStructure (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR                *PartitionDesc,
-  IN UDF_FILE_SET_DESCRIPTOR                 *FileSetDesc,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
+  OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          ***LogicalVolDescs,
+  OUT UINTN                                  *LogicalVolDescsNo,
+  OUT UDF_PARTITION_DESCRIPTOR               ***PartitionDescs,
+  OUT UINTN                                  *PartitionDescsNo
+  );
+
+UINT64
+GetLsnFromLongAd (
+  IN UDF_PARTITION_DESCRIPTOR         **PartitionDescs,
+  IN UINTN                            PartitionDescsNo,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd
+  );
+
+UINT64
+GetLsnFromShortAd (
+  IN UDF_PARTITION_DESCRIPTOR         *PartitionDesc,
+  IN UDF_SHORT_ALLOCATION_DESCRIPTOR  *ShortAd
   );
 
 EFI_STATUS
-EFIAPI
-ReadDirectory (
-  IN EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  IN UINT32                                 PartitionStartingLocation,
-  IN UINT32                                 PartitionLength,
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR         *ParentFileIdentifierDesc,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR        *ReadFileIdentifierDesc,
-  IN OUT UINT64                             *NextOffset,
-  OUT BOOLEAN                               *ReadDone
+GetFileSetDescriptors (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_LOGICAL_VOLUME_DESCRIPTOR           **LogicalVolDescs,
+  IN UINTN                                   LogicalVolDescsNo,
+  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
+  IN UINTN                                   PartitionDescsNo,
+  OUT UDF_FILE_SET_DESCRIPTOR                ***FileSetDescs,
+  OUT UINTN                                  *FileSetDescsNo
   );
 
 EFI_STATUS
-EFIAPI
+FindFileEntryFromLongAd (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
+  IN UINTN                                   PartitionDescsNo,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *LongAd,
+  OUT VOID                                   **FileEntry
+  );
+
+EFI_STATUS
+FindFileFromFileEntry (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *RootDirectoryIcb,
+  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
+  IN UINTN                                   PartitionDescsNo,
+  IN CHAR16                                  *FileName,
+  IN VOID                                    *ParentFileEntry,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc,
+  OUT VOID                                   **FoundFileEntry
+  );
+
+EFI_STATUS
+DuplicateFileIdentifierDescriptor (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR    *FileIdentifierDesc,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR   **NewFileIdentifierDesc
+  );
+
+EFI_STATUS
+DuplicateFileEntry (
+  IN EFI_BLOCK_IO_PROTOCOL   *BlockIo,
+  IN VOID                    *FileEntry,
+  OUT VOID                   **NewFileEntry
+  );
+
+EFI_STATUS
 FileIdentifierDescToFileName (
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
   OUT UINT16                          **FileName
