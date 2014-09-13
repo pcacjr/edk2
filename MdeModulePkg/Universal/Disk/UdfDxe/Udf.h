@@ -100,6 +100,10 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #define IS_EXTENT_RECORDED(_Icb) \
     ((((_Icb)->ExtentLength >> 30) && 0xFF) == 0)
 
+#define LONG_ADS_SEQUENCE    1
+#define SHORT_ADS_SEQUENCE   2
+#define INLINE_DATA          3
+
 #pragma pack(1)
 
 #define UDF_STANDARD_IDENTIFIER_LENGTH   5
@@ -398,16 +402,21 @@ typedef struct {
   struct {
     VOID                                   *FileEntry;
     UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
+    struct {
+      UINT64                               AdOffset;
+      UINT64                               FidOffset;
+    } DirectoryEntryInfo;
   } File;
 
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   EFI_FILE_PROTOCOL                      FileIo;
-  UINT64                                 FilePosition;
   UINT64                                 NextEntryOffset;
   CHAR16                                 *AbsoluteFileName;
   CHAR16                                 *FileName;
+  UINT64                                 FileSize;
+  UINT64                                 FilePosition;
   BOOLEAN                                IsRootDirectory;
 } PRIVATE_UDF_FILE_DATA;
 
@@ -699,6 +708,50 @@ FindRootDirectory (
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
 
+UINT64
+GetFileSize (
+  IN VOID                           *Data
+  );
+
+EFI_STATUS
+ReadFileData (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
+  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
+  IN UINTN                                   PartitionDescsNo,
+  IN VOID                                    *FileEntryData,
+  IN UINT64                                  FileSize,
+  IN OUT UINT64                              *CurrentFilePosition,
+  IN OUT VOID                                *Buffer,
+  IN OUT UINT64                              *BufferSize
+  );
+
+EFI_STATUS
+ReadDirectoryEntry (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
+  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
+  IN UINTN                                   PartitionDescsNo,
+  IN VOID                                    *FileEntryData,
+  IN OUT UINT64                              *AdOffset,
+  IN OUT UINT64                              *FidOffset,
+  IN OUT UINT64                              *CurrentFilePosition,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc,
+  OUT VOID                                   **FoundFileEntry
+  );
+
+EFI_STATUS
+SetFileInfo (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
+  IN VOID                             *FileEntryData,
+  IN UINT64                           FileSize,
+  IN CHAR16                           *FileName,
+  IN OUT UINTN                        *BufferSize,
+  OUT VOID                            *Buffer
+  );
+
 EFI_STATUS
 IsSupportedUdfVolume (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
@@ -755,7 +808,7 @@ EFI_STATUS
 FindFileFromFileEntry (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *RootDirectoryIcb,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
   IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
   IN UINTN                                   PartitionDescsNo,
   IN CHAR16                                  *FileName,
