@@ -737,9 +737,7 @@ ReadDirectoryEntry (
   IN VOID                                    *FileEntryData,
   IN OUT UINT64                              *AdOffset,
   IN OUT UINT64                              *FidOffset,
-  IN OUT UINT64                              *CurrentFilePosition,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc,
-  OUT VOID                                   **FoundFileEntry
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc
   );
 
 EFI_STATUS
@@ -805,14 +803,20 @@ FindFileEntryFromLongAd (
   );
 
 EFI_STATUS
-FindFileFromFileEntry (
+GetFileNameFromFid (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
+  OUT CHAR16                          **FileName
+  );
+
+EFI_STATUS
+FindFile (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
   IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
   IN UINTN                                   PartitionDescsNo,
   IN CHAR16                                  *FileName,
-  IN VOID                                    *ParentFileEntry,
+  IN VOID                                    *FileEntryData,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc,
   OUT VOID                                   **FoundFileEntry
   );
