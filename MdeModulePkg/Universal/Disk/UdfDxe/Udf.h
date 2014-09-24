@@ -64,6 +64,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 266)
 #define IS_FID(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 257)
+#define IS_AED(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 258)
 
 #define IS_FE_DIRECTORY(_Pointer) \
   (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
@@ -94,11 +96,21 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #define IS_FID_NORMAL_FILE(_Pointer) \
   ((!IS_FID_DIRECTORY_FILE (_Pointer)) && (!IS_FID_PARENT_FILE (_Pointer)))
 
+typedef enum {
+  EXTENT_RECORDED_AND_ALLOCATED,
+  EXTENT_NOT_RECORDED_BUT_ALLOCATED,
+  EXTENT_NOT_RECORDED_NOT_ALLOCATED,
+  EXTENT_IS_NEXT_EXTENT,
+} UDF_EXTENT_FLAGS;
+
+#define GET_EXTENT_FLAGS(_Ad) \
+  ((UDF_EXTENT_FLAGS)((((_Ad)->ExtentLength >> 30) & 0x3)))
+#define GET_EXTENT_LENGTH(_Ad) \
+  ((UINT32)((_Ad)->ExtentLength & ~0xC0000000UL))
+
 //
 // ECMA 167 4/14.14.1.1
 //
-#define IS_EXTENT_RECORDED(_Icb) \
-    ((((_Icb)->ExtentLength >> 30) && 0xFF) == 0)
 
 #define LONG_ADS_SEQUENCE    1
 #define SHORT_ADS_SEQUENCE   2
@@ -195,6 +207,15 @@ typedef struct {
   UDF_LB_ADDR                       ExtentLocation;
   UINT8                             ImplementationUse[6];
 } UDF_LONG_ALLOCATION_DESCRIPTOR;
+
+//
+// ECMA 167 4/14.5
+//
+typedef struct {
+  UDF_DESCRIPTOR_TAG                  DescriptorTag;
+  UINT32                              PrevAllocationExtentDescriptor;
+  UINT32                              LengthOfAllocationDescriptors;
+} UDF_ALLOCATION_EXTENT_DESCRIPTOR;
 
 //
 // ECMA 167 3/9.1
@@ -403,6 +424,8 @@ typedef struct {
     VOID                                   *FileEntry;
     UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
     struct {
+      UINT64                               AedAdsOffset;
+      UINT64                               AedAdsLength;
       UINT64                               AdOffset;
       UINT64                               FidOffset;
     } DirectoryEntryInfo;
@@ -412,7 +435,6 @@ typedef struct {
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   EFI_FILE_PROTOCOL                      FileIo;
-  UINT64                                 NextEntryOffset;
   CHAR16                                 *AbsoluteFileName;
   CHAR16                                 *FileName;
   UINT64                                 FileSize;
@@ -735,6 +757,8 @@ ReadDirectoryEntry (
   IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
   IN UINTN                                   PartitionDescsNo,
   IN VOID                                    *FileEntryData,
+  IN OUT UINT64                              *AedAdsOffset,
+  IN OUT UINT64                              *AedAdsLength,
   IN OUT UINT64                              *AdOffset,
   IN OUT UINT64                              *FidOffset,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc
