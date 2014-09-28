@@ -108,13 +108,16 @@ typedef enum {
 #define GET_EXTENT_LENGTH(_Ad) \
   ((UINT32)((_Ad)->ExtentLength & ~0xC0000000UL))
 
-//
-// ECMA 167 4/14.14.1.1
-//
+typedef enum {
+  LONG_ADS_SEQUENCE         = 1,
+  SHORT_ADS_SEQUENCE,
+  INLINE_DATA
+} UDF_FE_RECORDING_FLAGS;
 
-#define LONG_ADS_SEQUENCE    1
-#define SHORT_ADS_SEQUENCE   2
-#define INLINE_DATA          3
+#define GET_FE_RECORDING_FLAGS(_Fe) \
+  ((UDF_FE_RECORDING_FLAGS)((UDF_ICB_TAG *)( \
+			      (UINT8 *)(_Fe) + \
+			      sizeof (UDF_DESCRIPTOR_TAG)))->Flags & 0x07)
 
 #pragma pack(1)
 

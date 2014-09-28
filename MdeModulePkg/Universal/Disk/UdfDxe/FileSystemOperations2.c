@@ -657,7 +657,6 @@ NextEntry:
 				  &NewFileEntryData
                                   );
     if (EFI_ERROR (Status)) {
-      Print (L"read: findfe failed: %r\n", Status);
       goto FreeExit;
     }
 
@@ -1257,9 +1256,6 @@ GetLsnFromLongAd (
 {
   UDF_PARTITION_DESCRIPTOR            *PartitionDesc;
 
-  Print (L"longad: extlen: %d\n", LongAd->ExtentLength);
-  Print (L"longad: (hacked) extlen: %d\n", GET_EXTENT_LENGTH (LongAd));
-
   if (!GET_EXTENT_LENGTH (LongAd)) {
     return 0;
   }
@@ -1519,12 +1515,9 @@ FindFileEntryFromLongAd (
 
   if ((!IS_FE (*FileEntry)) && (!IS_EFE (*FileEntry))) {
     DescriptorTag = (UDF_DESCRIPTOR_TAG *)*FileEntry;
-    Print (L"findfe: tag num: %d\n", DescriptorTag->TagIdentifier);
     FreePool (*FileEntry);
     Status = EFI_VOLUME_CORRUPTED;
   }
-
-  Print (L"findfe: filetype: %d\n", ((UDF_EXTENDED_FILE_ENTRY *)*FileEntry)->IcbTag.FileType);
 
 Exit:
   return Status;
@@ -1672,8 +1665,6 @@ FindFile (
   CHAR16                                     *FoundFileName;
   VOID                                       *CompareFileEntry;
 
-  Print (L"findfile: fname: %s\n", FileName);
-
   if (IS_EFE (FileEntryData)) {
     ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 
@@ -1724,22 +1715,14 @@ FindFile (
 	break;
       }
     } else {
-      if (!FileIdentifierDesc->LengthOfFileIdentifier) {
-	goto NextEntry;
-      }
-#if 0
       if (FileNameLength != FileIdentifierDesc->LengthOfFileIdentifier - 1) {
-	Print (L"findfile: filename len: %d\n", FileIdentifierDesc->LengthOfFileIdentifier - 1);
 	goto NextEntry;
       }
-#endif
 
       Status = GetFileNameFromFid (FileIdentifierDesc, &FoundFileName);
       if (EFI_ERROR (Status)) {
 	break;
       }
-
-      Print (L"findfile: got '%s'\n", FoundFileName);
 
       if (!StrCmp (FileName, FoundFileName)) {
 	Found = TRUE;
@@ -1786,9 +1769,45 @@ NextEntry:
   }
 
 Exit:
-  Print (L"findfile: exit: %r\n", Status);
-
   return Status;
+}
+
+EFI_STATUS
+GetLongAdFromAds (
+  IN VOID                              *ExtentData,
+  IN OUT UINT64                        *ExtentDataOffset,
+  IN UINT64                            ExtentLength,
+  OUT UDF_LONG_ALLOCATION_DESCRIPTOR   **FoundLongAd
+  )
+{
+  UINT64                               AdLength;
+  UDF_LONG_ALLOCATION_DESCRIPTOR       *LongAd;
+
+  AdLength = sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR);
+
+  for (;;) {
+    if (*ExtentDataOffset >= ExtentLength) {
+      return EFI_DEVICE_ERROR;
+    }
+
+    LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)(
+                                           (UINT8 *)ExtentData +
+					   *ExtentDataOffset
+                                           );
+    switch (GET_EXTENT_FLAGS (LongAd)) {
+      case EXTENT_NOT_RECORDED_BUT_ALLOCATED:
+      case EXTENT_NOT_RECORDED_NOT_ALLOCATED:
+	*ExtentDataOffset += AdLength;
+	continue;
+      case EXTENT_IS_NEXT_EXTENT:
+      case EXTENT_RECORDED_AND_ALLOCATED:
+	goto Exit;
+    }
+  }
+
+Exit:
+  *FoundLongAd = LongAd;
+  return EFI_SUCCESS;
 }
 
 UINT64
@@ -1796,7 +1815,6 @@ GetFileSize (
   IN VOID                           *Data
   )
 {
-  UDF_ICB_TAG                       *IcbTag;
   UINT64                            Size;
   UDF_EXTENDED_FILE_ENTRY           *ExtendedFileEntry;
   UDF_FILE_ENTRY                    *FileEntry;
@@ -1809,8 +1827,7 @@ GetFileSize (
 
   Size = 0;
 
-  IcbTag = (UDF_ICB_TAG *)((UINT8 *)Data + sizeof (UDF_DESCRIPTOR_TAG));
-  switch (IcbTag->Flags & 0x07) {
+  switch (GET_FE_RECORDING_FLAGS (Data)) {
     case INLINE_DATA:
       if (IS_EFE (Data)) {
 	Size = ((UDF_EXTENDED_FILE_ENTRY *)Data)->InformationLength;
@@ -1824,14 +1841,14 @@ GetFileSize (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)Data;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data +
                            ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (Data)) {
 	FileEntry = (UDF_FILE_ENTRY *)Data;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           FileEntry->Data +
+                           &FileEntry->Data +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -1857,14 +1874,14 @@ GetFileSize (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)Data;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data +
                            ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (Data)) {
 	FileEntry = (UDF_FILE_ENTRY *)Data;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           FileEntry->Data +
+                           &FileEntry->Data +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -1897,7 +1914,6 @@ ReadFileData (
 {
   EFI_STATUS                                 Status;
   UINT32                                     BlockSize;
-  UDF_ICB_TAG                                *IcbTag;
   UDF_EXTENDED_FILE_ENTRY                    *ExtendedFileEntry;
   UDF_FILE_ENTRY                             *FileEntry;
   UINT64                                     Offset;
@@ -1917,11 +1933,7 @@ ReadFileData (
   Status      = EFI_VOLUME_CORRUPTED;
   BlockSize   = BlockIo->Media->BlockSize;
 
-  IcbTag = (UDF_ICB_TAG *)(
-                      (UINT8 *)FileEntryData +
-		      sizeof (UDF_DESCRIPTOR_TAG)
-                      );
-  switch (IcbTag->Flags & 0x07) {
+  switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
       if (*BufferSize > FileSize - *CurrentFilePosition + 1) {
 	*BufferSize = FileSize - *CurrentFilePosition + 1;
@@ -1959,14 +1971,14 @@ ReadFileData (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data +
 			   ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           FileEntry->Data +
+                           &FileEntry->Data +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -2067,14 +2079,14 @@ ReadFileData (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data +
 			   ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           FileEntry->Data +
+                           &FileEntry->Data +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -2256,7 +2268,6 @@ ReadDirectoryEntry (
 {
   EFI_STATUS                                 Status;
   UINT32                                     BlockSize;
-  UDF_ICB_TAG                                *IcbTag;
   UDF_FILE_IDENTIFIER_DESCRIPTOR             *FileIdentifierDesc;
   UDF_EXTENDED_FILE_ENTRY                    *ExtendedFileEntry;
   UDF_FILE_ENTRY                             *FileEntry;
@@ -2265,7 +2276,6 @@ ReadDirectoryEntry (
   UINT8                                      *AdsData;
   UINT64                                     AdLength;
   UDF_LONG_ALLOCATION_DESCRIPTOR             *LongAd;
-  UDF_EXTENT_FLAGS                           ExtentFlags;
   UDF_SHORT_ALLOCATION_DESCRIPTOR            *ShortAd;
   VOID                                       *ExtentData;
   UINT64                                     ExtentLength;
@@ -2273,20 +2283,11 @@ ReadDirectoryEntry (
   UINT64                                     Lsn;
   UINT8                                      *Buffer;
 
-#if 1
-  Print (L"readdir: in\n");
-  Print (L"readdir: adoffs (%d) - fidoffs (%d)\n", *AdOffset, *FidOffset);
-#endif
-
   Status       = EFI_VOLUME_CORRUPTED;
   BlockSize    = BlockIo->Media->BlockSize;
   ExtentData   = NULL;
 
-  IcbTag = (UDF_ICB_TAG *)(
-                      (UINT8 *)FileEntryData +
-		      sizeof (UDF_DESCRIPTOR_TAG)
-                      );
-  switch (IcbTag->Flags & 0x07) {
+  switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
       if (IS_EFE (FileEntryData)) {
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
@@ -2330,21 +2331,19 @@ ExcludeDeletedFile0:
 	  ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	  Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	  AdsData     = (UINT8 *)(
-                             ExtendedFileEntry->Data +
+                             &ExtendedFileEntry->Data +
 			     ExtendedFileEntry->LengthOfExtendedAttributes
                              );
 	} else if (IS_FE (FileEntryData)) {
 	  FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	  Length      = FileEntry->LengthOfAllocationDescriptors;
 	  AdsData     = (UINT8 *)(
-                             FileEntry->Data +
+                             &FileEntry->Data +
                              FileEntry->LengthOfExtendedAttributes
                              );
 	}
       } else {
 HandleIndirectExt:
-	Print (L"readdir: starting with indirect entry\n");
-
 	Length = *AedAdsLength;
 
 	AdsData = (UINT8 *)AllocatePool (Length);
@@ -2368,28 +2367,13 @@ HandleIndirectExt:
       AdLength = sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR);
 
 ExcludeDeletedFile1:
+      for (;;) {
+	Status = GetLongAdFromAds (AdsData, AdOffset, Length, &LongAd);
+	if (EFI_ERROR (Status)) {
+	  goto Exit;
+	}
 
-NextLongAd:
-      if (*AdOffset >= Length) {
-	Status = EFI_DEVICE_ERROR;
-	goto Exit;
-      }
-
-      LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)(
-                                             AdsData +
-					     *AdOffset
-                                             );
-
-      Print (L"readdir: longad: start: %d\n", LongAd->ExtentLocation.LogicalBlockNumber);
-
-      switch (GET_EXTENT_FLAGS (LongAd)) {
-	case EXTENT_NOT_RECORDED_BUT_ALLOCATED:
-	case EXTENT_NOT_RECORDED_NOT_ALLOCATED:
-	  Print (L"readdir: extent NOT recorded!\n");
-	  *AdOffset += AdLength;
-	  goto NextLongAd;
-	case EXTENT_IS_NEXT_EXTENT:
-	  Print (L"readdir: extent IS NEXT EXTENT!\n");
+	if (GET_EXTENT_FLAGS (LongAd) == EXTENT_IS_NEXT_EXTENT) {
 	  Status = GetAedAdsData (
                               BlockIo,
 			      DiskIo,
@@ -2405,17 +2389,15 @@ NextLongAd:
 
 	  *AdOffset = 0;
 	  goto HandleIndirectExt;
-	case EXTENT_RECORDED_AND_ALLOCATED:
-	  Print (L"readdir: extent recorded!\n");
-	  break;
-      }
+	}
 
-      ExtentLength = GET_EXTENT_LENGTH (LongAd);
-      if (*FidOffset >= ExtentLength) {
-        *AdOffset    += AdLength;
-        *FidOffset   -= ExtentLength;
-	Print (L"readdir: new fidoffset: %d\n", *FidOffset);
-        goto NextLongAd;
+	ExtentLength = GET_EXTENT_LENGTH (LongAd);
+	if (*FidOffset < ExtentLength) {
+	  break;
+	}
+
+	*AdOffset    += AdLength;
+	*FidOffset   -= ExtentLength;
       }
 
       Lsn = GetLsnFromLongAd (
@@ -2446,32 +2428,12 @@ NextLongAd:
       }
 
       RemBytes = ExtentLength - *FidOffset;
-#if 1
-      Print (L"readdir: extlen: %d\n", ExtentLength);
-      Print (L"readdir: fidoffs: %d\n", *FidOffset);
-      Print (L"readdir: sizeof fid: %d\n", sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR));
-      Print (L"readdir: extlen - fidoffs: %d\n", RemBytes);
-#endif
       if (RemBytes < sizeof (UDF_FILE_IDENTIFIER_DESCRIPTOR)) {
-	do {
-	  *AdOffset += AdLength;
-	  if (*AdOffset >= Length) {
-	    Status = EFI_DEVICE_ERROR;
-	    goto FreeExit;
-	  }
-
-          LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)(
-	    AdsData +
-	    *AdOffset
-	    );
-	  ExtentFlags = GET_EXTENT_FLAGS (LongAd);
-	  ASSERT (ExtentFlags != EXTENT_NOT_RECORDED_BUT_ALLOCATED);
-	  ASSERT (ExtentFlags != EXTENT_NOT_RECORDED_NOT_ALLOCATED);
-	} while ((ExtentFlags == EXTENT_NOT_RECORDED_BUT_ALLOCATED) ||
-                 (ExtentFlags == EXTENT_NOT_RECORDED_NOT_ALLOCATED));
-
-	Print (L"readdir: here 0\n");
-	Print (L"readdir: longad: start: %d\n", LongAd->ExtentLocation.LogicalBlockNumber);
+	*AdOffset += AdLength;
+	Status = GetLongAdFromAds (AdsData, AdOffset, Length, &LongAd);
+	if (EFI_ERROR (Status)) {
+	  goto FreeExit;
+	}
 
 	Buffer = AllocatePool (RemBytes);
 	if (!Buffer) {
@@ -2479,20 +2441,15 @@ NextLongAd:
 	  goto FreeExit;
 	}
 
-	Print (L"readdir: here 1\n");
-
 	CopyMem (
 	  Buffer,
-	  //(VOID *)((UINT8 *)(ExtentData + (ExtentLength - RemBytes))),
 	  (VOID *)((UINT8 *)(ExtentData + *FidOffset)),
 	  RemBytes
 	  );
 
 	FreePool (ExtentData);
 
-	if (ExtentFlags == EXTENT_IS_NEXT_EXTENT) {
-	  Print (L"readdir: GOT INDIRECT ENTRY!!!\n");
-
+	if (GET_EXTENT_FLAGS (LongAd) == EXTENT_IS_NEXT_EXTENT) {
 	  Status = GetAedAdsData (
                               BlockIo,
 			      DiskIo,
@@ -2519,21 +2476,9 @@ NextLongAd:
 	    goto Exit;
 	  }
 
-	  for (*AdOffset = 0; *AdOffset < Length; *AdOffset += AdLength) {
-	    LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)(
-                                                   AdsData +
-					           *AdOffset
-                                                   );
-	    ExtentFlags = GET_EXTENT_FLAGS (LongAd);
-	    if ((ExtentFlags != EXTENT_NOT_RECORDED_BUT_ALLOCATED) &&
-		(ExtentFlags != EXTENT_NOT_RECORDED_NOT_ALLOCATED)) {
-	      break;
-	    }
-	  }
-
-	  if (*AdOffset >= Length) {
-	    FreePool ((VOID *)AdsData);
-	    Status = EFI_DEVICE_ERROR;
+	  *AdOffset = 0;
+	  Status = GetLongAdFromAds (AdsData, AdOffset, Length, &LongAd);
+	  if (EFI_ERROR (Status)) {
 	    goto Exit;
 	  }
 	}
@@ -2549,8 +2494,6 @@ NextLongAd:
 	  Status = EFI_VOLUME_CORRUPTED;
 	  goto Exit;
 	}
-
-	Print (L"readdir: here 2 -> LSN %d\n", Lsn);
 
 	ExtentData = AllocatePool (ExtentLength + RemBytes);
 	if (!ExtentData) {
@@ -2585,14 +2528,7 @@ NextLongAd:
 	                                                     );
       *FidOffset += GetFidDescriptorLength (FileIdentifierDesc) - RemBytes;
 
-      if (!IS_FID (FileIdentifierDesc)) {
-	Print (L"readdir: NO FID!!!!!!!\n");
-      } else {
-	Print (L"readdir: fid char: 0x%02x\n", FileIdentifierDesc->FileCharacteristics);
-      }
-
       if (IS_FID_DELETED_FILE (FileIdentifierDesc)) {
-	Print (L"readdir: exclude deleted file\n");
 	FreePool (ExtentData);
 	ExtentData = NULL;
 	goto ExcludeDeletedFile1;
@@ -2605,14 +2541,14 @@ NextLongAd:
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data +
 			   ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           FileEntry->Data +
+                           &FileEntry->Data +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -2620,26 +2556,27 @@ NextLongAd:
       AdLength = sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
 
 ExcludeDeletedFile2:
+      for (;;) {
+	if (*AdOffset >= Length) {
+	  Status = EFI_DEVICE_ERROR;
+	  goto Exit;
+	}
 
-NextShortAd:
-      if (*AdOffset >= Length) {
-	Status = EFI_DEVICE_ERROR;
-	goto Exit;
-      }
+        ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)(
+                                                AdsData +
+					        *AdOffset
+                                                );
+        if (!ShortAd->ExtentLength) {
+	  continue;
+	}
 
-      ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)(
-                                              AdsData +
-					      *AdOffset
-                                              );
-      if (!ShortAd->ExtentLength) {
-	goto NextShortAd;
-      }
+	ExtentLength = ShortAd->ExtentLength;
+	if (*FidOffset < ExtentLength) {
+	  break;
+	}
 
-      ExtentLength = ShortAd->ExtentLength;
-      if (*FidOffset >= ExtentLength) {
-        *AdOffset    += AdLength;
-        *FidOffset   -= ExtentLength;
-        goto NextShortAd;
+	*AdOffset    += AdLength;
+	*FidOffset   -= ExtentLength;
       }
 
       Lsn = GetLsnFromShortAd (
