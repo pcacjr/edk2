@@ -849,6 +849,17 @@ FindFile (
   );
 
 EFI_STATUS
+GetAedAdsData (
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_PARTITION_DESCRIPTOR         **PartitionDescs,
+  IN UINTN                            PartitionDescsNo,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd,
+  OUT UINT64                          *Offset,
+  OUT UINT64                          *Length
+  );
+
+EFI_STATUS
 DuplicateFileIdentifierDescriptor (
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR    *FileIdentifierDesc,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR   **NewFileIdentifierDesc
