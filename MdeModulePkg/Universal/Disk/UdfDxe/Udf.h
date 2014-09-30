@@ -733,9 +733,14 @@ FindRootDirectory (
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
   );
 
-UINT64
+EFI_STATUS
 GetFileSize (
-  IN VOID                           *Data
+  IN EFI_BLOCK_IO_PROTOCOL          *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL           *DiskIo,
+  IN UDF_PARTITION_DESCRIPTOR       **PartitionDescs,
+  IN UINTN                          PartitionDescsNo,
+  IN VOID                           *FileEntryData,
+  OUT UINT64                        *Size
   );
 
 EFI_STATUS
