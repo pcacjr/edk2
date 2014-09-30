@@ -2504,10 +2504,12 @@ ReadDirectoryEntry (
   UINT64                                     RemBytes;
   UINT64                                     Lsn;
   UINT8                                      *Buffer;
+  BOOLEAN                                    DoFreeAed;
 
   Status       = EFI_VOLUME_CORRUPTED;
   BlockSize    = BlockIo->Media->BlockSize;
   ExtentData   = NULL;
+  DoFreeAed    = FALSE;
 
   switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
@@ -2568,8 +2570,15 @@ ExcludeDeletedFile0:
 HandleIndirectExt:
 	Length = *AedAdsLength;
 
+	if (!DoFreeAed) {
+	  DoFreeAed = TRUE;
+	} else {
+	  FreePool ((VOID *)AdsData);
+	}
+
 	AdsData = (UINT8 *)AllocatePool (Length);
 	if (!AdsData) {
+	  DoFreeAed = FALSE;
 	  Status = EFI_OUT_OF_RESOURCES;
 	  goto Exit;
 	}
@@ -2686,6 +2695,19 @@ ExcludeDeletedFile1:
 	  }
 
 	  Length = *AedAdsLength;
+
+	  if (!DoFreeAed) {
+	    DoFreeAed = TRUE;
+	  } else {
+	    FreePool ((VOID *)AdsData);
+	  }
+
+	  AdsData = (UINT8 *)AllocatePool (Length);
+	  if (!AdsData) {
+	    DoFreeAed = FALSE;
+	    Status = EFI_OUT_OF_RESOURCES;
+	    goto Exit;
+	  }
 
 	  Status = DiskIo->ReadDisk (
                                   DiskIo,
@@ -2919,6 +2941,10 @@ FreeExit:
   }
 
 Exit:
+  if (DoFreeAed) {
+    FreePool ((VOID *)AdsData);
+  }
+
   return Status;
 }
 
