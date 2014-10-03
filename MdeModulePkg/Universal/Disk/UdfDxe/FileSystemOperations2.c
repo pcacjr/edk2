@@ -597,7 +597,6 @@ UdfRead (
       //
       // File's position is beyond the EOF
       //
-      Print (L"------------> %d\n", PrivFileData->FilePosition);
       Status = EFI_DEVICE_ERROR;
       goto Exit;
     } else if (
@@ -1630,7 +1629,8 @@ GetFileNameFromFid (
   Status = EFI_SUCCESS;
 
   AsciiFileName = (CHAR8 *)AllocatePool (
-                                    FileIdentifierDesc->LengthOfFileIdentifier
+                                    FileIdentifierDesc->LengthOfFileIdentifier *
+                                    sizeof (CHAR8)
                                     );
   if (!AsciiFileName) {
     Status = EFI_OUT_OF_RESOURCES;
@@ -1640,7 +1640,7 @@ GetFileNameFromFid (
   AsciiStrnCpy (
     AsciiFileName,
     (CONST CHAR8 *)(
-      (UINT8 *)&FileIdentifierDesc->Data[0] +
+      (UINT8 *)&FileIdentifierDesc->Data +
       FileIdentifierDesc->LengthOfImplementationUse + 1
       ),
     FileIdentifierDesc->LengthOfFileIdentifier - 1
@@ -1649,8 +1649,8 @@ GetFileNameFromFid (
   AsciiFileName[FileIdentifierDesc->LengthOfFileIdentifier - 1] = '\0';
 
   *FileName = (CHAR16 *)AllocatePool (
-                                 AsciiStrLen (AsciiFileName) +
-				 sizeof (CHAR16)
+                                 FileIdentifierDesc->LengthOfFileIdentifier *
+                                 sizeof (CHAR16)
                                  );
   if (!*FileName) {
     Status = EFI_OUT_OF_RESOURCES;
