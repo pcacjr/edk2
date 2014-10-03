@@ -1640,7 +1640,7 @@ GetFileNameFromFid (
   AsciiStrnCpy (
     AsciiFileName,
     (CONST CHAR8 *)(
-      (UINT8 *)&FileIdentifierDesc->Data +
+      (UINT8 *)&FileIdentifierDesc->Data[0] +
       FileIdentifierDesc->LengthOfImplementationUse + 1
       ),
     FileIdentifierDesc->LengthOfFileIdentifier - 1
@@ -1908,14 +1908,14 @@ GetFileSize (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data[0] +
                            ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &FileEntry->Data +
+                           &FileEntry->Data[0] +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -1980,14 +1980,14 @@ GetFileSize (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data[0] +
                            ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &FileEntry->Data +
+                           &FileEntry->Data[0] +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -2047,8 +2047,8 @@ ReadFileData (
 
   switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
-      if (*BufferSize > FileSize - *CurrentFilePosition + 1) {
-	*BufferSize = FileSize - *CurrentFilePosition + 1;
+      if (*BufferSize > FileSize - *CurrentFilePosition) {
+	*BufferSize = FileSize - *CurrentFilePosition;
       }
 
       if (IS_EFE (FileEntryData)) {
@@ -2056,7 +2056,7 @@ ReadFileData (
 	CopyMem (
 	  Buffer,
 	  (VOID *)((UINT8 *)(
-                        &ExtendedFileEntry->Data +
+                        &ExtendedFileEntry->Data[0] +
 			ExtendedFileEntry->LengthOfExtendedAttributes +
 			*CurrentFilePosition
 		     )),
@@ -2067,7 +2067,7 @@ ReadFileData (
 	CopyMem (
 	  Buffer,
 	  (VOID *)((UINT8 *)(
-                        &FileEntry->Data +
+                        &FileEntry->Data[0] +
 			FileEntry->LengthOfExtendedAttributes +
 			*CurrentFilePosition
 		     )),
@@ -2075,7 +2075,7 @@ ReadFileData (
           );
       }
 
-      *CurrentFilePosition   += *BufferSize - 1;
+      *CurrentFilePosition   += *BufferSize;
       Status                 = EFI_SUCCESS;
       break;
     case LONG_ADS_SEQUENCE:
@@ -2083,14 +2083,14 @@ ReadFileData (
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data[0] +
 			   ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           FileEntry->Data +
+                           &FileEntry->Data[0] +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -2282,14 +2282,14 @@ ReadDone0:
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data[0] +
 			   ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &FileEntry->Data +
+                           &FileEntry->Data[0] +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
@@ -2518,7 +2518,7 @@ ReadDirectoryEntry (
 
 	Length   = ExtendedFileEntry->InformationLength;
 	Data     = (UINT8 *)(
-                        &ExtendedFileEntry->Data +
+                        &ExtendedFileEntry->Data[0] +
 			ExtendedFileEntry->LengthOfExtendedAttributes
                         );
       } else if (IS_FE (FileEntryData)) {
@@ -2526,7 +2526,7 @@ ReadDirectoryEntry (
 
 	Length   = FileEntry->InformationLength;
 	Data     = (UINT8 *)(
-                        &FileEntry->Data +
+                        &FileEntry->Data[0] +
 			FileEntry->LengthOfExtendedAttributes
                         );
       }
@@ -2555,14 +2555,14 @@ ExcludeDeletedFile0:
 	  ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	  Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	  AdsData     = (UINT8 *)(
-                             &ExtendedFileEntry->Data +
+                             &ExtendedFileEntry->Data[0] +
 			     ExtendedFileEntry->LengthOfExtendedAttributes
                              );
 	} else if (IS_FE (FileEntryData)) {
 	  FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	  Length      = FileEntry->LengthOfAllocationDescriptors;
 	  AdsData     = (UINT8 *)(
-                             &FileEntry->Data +
+                             &FileEntry->Data[0] +
                              FileEntry->LengthOfExtendedAttributes
                              );
 	}
@@ -2785,14 +2785,14 @@ ExcludeDeletedFile1:
 	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
 	Length      = ExtendedFileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &ExtendedFileEntry->Data +
+                           &ExtendedFileEntry->Data[0] +
 			   ExtendedFileEntry->LengthOfExtendedAttributes
                            );
       } else if (IS_FE (FileEntryData)) {
 	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 	Length      = FileEntry->LengthOfAllocationDescriptors;
 	AdsData     = (UINT8 *)(
-                           &FileEntry->Data +
+                           &FileEntry->Data[0] +
                            FileEntry->LengthOfExtendedAttributes
                            );
       }
