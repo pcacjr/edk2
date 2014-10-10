@@ -2427,7 +2427,7 @@ GetAedAdsData (
 {
   EFI_STATUS                          Status;
   UINT32                              ExtentLength;
-  UINT8                               *Data;
+  VOID                                *Data;
   UINT64                              Lsn;
   UINT32                              BlockSize;
   UDF_ALLOCATION_EXTENT_DESCRIPTOR    *AllocExtDesc;
@@ -2435,7 +2435,7 @@ GetAedAdsData (
   Data           = NULL;
   ExtentLength   = GET_EXTENT_LENGTH (LongAd);
 
-  Data = (UINT8 *)AllocatePool (ExtentLength);
+  Data = AllocatePool (ExtentLength);
   if (!Data) {
     Status = EFI_OUT_OF_RESOURCES;
     goto Exit;
@@ -2458,7 +2458,7 @@ GetAedAdsData (
 			  BlockIo->Media->MediaId,
 			  MultU64x32 (Lsn, BlockSize),
 			  ExtentLength,
-                          (VOID *)Data
+                          Data
                           );
   if (EFI_ERROR (Status)) {
     goto Exit;
@@ -2478,7 +2478,7 @@ GetAedAdsData (
 
 Exit:
   if (Data) {
-    FreePool ((VOID *)Data);
+    FreePool (Data);
   }
 
   return Status;
@@ -2516,12 +2516,17 @@ ReadDirectoryEntry (
   UINT64                                     Lsn;
   UINT8                                      *Buffer;
   BOOLEAN                                    DoFreeAed;
+  UINT64                                     FidLength;
+  UINT64                                     RemainingFidBytes;
+  UINT64                                     LastFidOffset;
 
-  Status       = EFI_VOLUME_CORRUPTED;
-  BlockSize    = BlockIo->Media->BlockSize;
-  ExtentData   = NULL;
-  DoFreeAed    = FALSE;
-  Buffer       = NULL;
+  Status                     = EFI_VOLUME_CORRUPTED;
+  BlockSize                  = BlockIo->Media->BlockSize;
+  ExtentData                 = NULL;
+  DoFreeAed                  = FALSE;
+  Buffer                     = NULL;
+  *FoundFileIdentifierDesc   = NULL;
+  RemainingFidBytes          = 0;
 
   switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
@@ -2592,6 +2597,7 @@ HandleIndirectExt:
       AdLength = sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR);
 
 ExcludeDeletedFile:
+ReadRemainingFidBytes:
       for (;;) {
 	Status = GetLongAdFromAds (AdsData, AdOffset, Length, &LongAd);
 	if (EFI_ERROR (Status)) {
@@ -2668,7 +2674,7 @@ ExcludeDeletedFile:
 
 	CopyMem (
 	  Buffer,
-	  (VOID *)((UINT8 *)(ExtentData + *FidOffset)),
+	  (VOID *)((UINT8 *)(ExtentData + (ExtentLength - RemBytes))),
 	  RemBytes
 	  );
 
@@ -2764,11 +2770,49 @@ ExcludeDeletedFile:
       FileIdentifierDesc = (UDF_FILE_IDENTIFIER_DESCRIPTOR *)((UINT8 *)(
                                                                    ExtentData +
 								   *FidOffset
-                                                                   )
+                                                                    )
 	                                                     );
-      *FidOffset += GetFidDescriptorLength (FileIdentifierDesc) - RemBytes;
+      FidLength = GetFidDescriptorLength (FileIdentifierDesc);
+      if ((RemainingFidBytes) || (*FidOffset + FidLength > ExtentLength)) {
+	if (!RemainingFidBytes) {
+	  *FoundFileIdentifierDesc =
+	    (UDF_FILE_IDENTIFIER_DESCRIPTOR *)AllocatePool (FidLength);
+	  if (!*FoundFileIdentifierDesc) {
+	    goto ErrorAllocFid;
+	  }
+
+	  CopyMem (
+	    (VOID *)*FoundFileIdentifierDesc,
+	    (VOID *)FileIdentifierDesc,
+	    ExtentLength - *FidOffset
+	    );
+	  LastFidOffset       = ExtentLength - *FidOffset;
+	  RemainingFidBytes   = FidLength - (ExtentLength - *FidOffset);
+	  *AdOffset           += AdLength;
+	  *FidOffset          = 0;
+	  FreePool (ExtentData);
+	  ExtentData = NULL;
+	  goto ReadRemainingFidBytes;
+	}
+
+	CopyMem (
+	  (VOID *)((UINT8 *)*FoundFileIdentifierDesc + LastFidOffset),
+	  (VOID *)FileIdentifierDesc,
+	  RemainingFidBytes
+	  );
+	*FidOffset          += RemainingFidBytes;
+	RemainingFidBytes   = 0;
+	LastFidOffset       = 0;
+      } else {
+	*FidOffset += FidLength - RemBytes;
+      }
 
       if (IS_FID_DELETED_FILE (FileIdentifierDesc)) {
+	if (*FoundFileIdentifierDesc) {
+	  FreePool ((VOID *)*FoundFileIdentifierDesc);
+	  *FoundFileIdentifierDesc = NULL;
+	}
+
 	FreePool (ExtentData);
 	ExtentData = NULL;
 	goto ExcludeDeletedFile;
@@ -2781,6 +2825,7 @@ ExcludeDeletedFile:
 
       AdLength = sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
 ExcludeDeletedFile2:
+ReadRemainingFidBytes2:
       for (;;) {
 	Status = GetShortAdFromAds (AdsData, AdOffset, Length, &ShortAd);
 	if (EFI_ERROR (Status)) {
@@ -2896,9 +2941,47 @@ ExcludeDeletedFile2:
 								   *FidOffset
                                                                    )
 	                                                     );
-      *FidOffset += GetFidDescriptorLength (FileIdentifierDesc) - RemBytes;
+      FidLength = GetFidDescriptorLength (FileIdentifierDesc);
+      if ((RemainingFidBytes) || (*FidOffset + FidLength > ExtentLength)) {
+	if (!RemainingFidBytes) {
+	  *FoundFileIdentifierDesc =
+	    (UDF_FILE_IDENTIFIER_DESCRIPTOR *)AllocatePool (FidLength);
+	  if (!*FoundFileIdentifierDesc) {
+	    goto ErrorAllocFid;
+	  }
+
+	  CopyMem (
+	    (VOID *)*FoundFileIdentifierDesc,
+	    (VOID *)FileIdentifierDesc,
+	    ExtentLength - *FidOffset
+	    );
+	  LastFidOffset = ExtentLength - *FidOffset;
+	  RemainingFidBytes = FidLength - (ExtentLength - *FidOffset);
+	  *AdOffset += AdLength;
+	  *FidOffset = 0;
+	  FreePool (ExtentData);
+	  ExtentData = NULL;
+	  goto ReadRemainingFidBytes2;
+	}
+
+	CopyMem (
+	  (VOID *)((UINT8 *)*FoundFileIdentifierDesc + LastFidOffset),
+	  (VOID *)FileIdentifierDesc,
+	  RemainingFidBytes
+	  );
+	*FidOffset += RemainingFidBytes;
+	RemainingFidBytes = 0;
+	LastFidOffset = 0;
+      } else {
+	*FidOffset += FidLength - RemBytes;
+      }
 
       if (IS_FID_DELETED_FILE (FileIdentifierDesc)) {
+	if (*FoundFileIdentifierDesc) {
+	  FreePool ((VOID *)*FoundFileIdentifierDesc);
+	  *FoundFileIdentifierDesc = NULL;
+	}
+
 	FreePool (ExtentData);
 	ExtentData = NULL;
 	goto ExcludeDeletedFile2;
@@ -2909,12 +2992,15 @@ ExcludeDeletedFile2:
   }
 
   if (!EFI_ERROR (Status)) {
-    Status = DuplicateFileIdentifierDescriptor (
-                                           FileIdentifierDesc,
-					   FoundFileIdentifierDesc
-                                           );
+    if (!*FoundFileIdentifierDesc) {
+      Status = DuplicateFileIdentifierDescriptor (
+                                             FileIdentifierDesc,
+					     FoundFileIdentifierDesc
+                                             );
+    }
   }
 
+ErrorAllocFid:
 ErrorGetLsnFromShortAd:
 ErrorGetShortAd:
 ErrorAllocBuf:
