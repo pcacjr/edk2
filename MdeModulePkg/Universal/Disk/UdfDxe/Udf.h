@@ -119,6 +119,12 @@ typedef enum {
 			      (UINT8 *)(_Fe) + \
 			      sizeof (UDF_DESCRIPTOR_TAG)))->Flags & 0x07)
 
+#define UDF_FILENAME_LENGTH   128
+#define UDF_PATH_LENGTH       512
+
+#define GET_FID_FROM_ADS(_Data, _Offs) \
+  (UDF_FILE_IDENTIFIER_DESCRIPTOR *)((UINT8 *)(_Data) + (_Offs))
+
 #pragma pack(1)
 
 #define UDF_STANDARD_IDENTIFIER_LENGTH   5
@@ -398,6 +404,27 @@ typedef struct {
 //
 // UDF filesystem driver's private data
 //
+typedef struct {
+  UDF_LOGICAL_VOLUME_DESCRIPTOR   **LogicalVolDescs;
+  UINTN                           LogicalVolDescsNo;
+  UDF_PARTITION_DESCRIPTOR        **PartitionDescs;
+  UINTN                           PartitionDescsNo;
+  UDF_FILE_SET_DESCRIPTOR         **FileSetDescs;
+  UINTN                           FileSetDescsNo;
+} UDF_VOLUME_INFO;
+
+typedef struct {
+  VOID                             *FileEntry;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc;
+} UDF_FILE_INFO;
+
+typedef struct {
+  UINT64                     AedAdsOffset;
+  UINT64                     AedAdsLength;
+  UINT64                     AdOffset;
+  UINT64                     FidOffset;
+} UDF_READ_DIRECTORY_INFO;
+
 #define PRIVATE_UDF_FILE_DATA_SIGNATURE SIGNATURE_32 ('U', 'd', 'f', 'f')
 
 #define PRIVATE_UDF_FILE_DATA_FROM_THIS(a) \
@@ -410,30 +437,10 @@ typedef struct {
 
 typedef struct {
   UINTN                                  Signature;
-
-  struct {
-    UDF_LOGICAL_VOLUME_DESCRIPTOR          **LogicalVolDescs;
-    UINTN                                  LogicalVolDescsNo;
-    UDF_PARTITION_DESCRIPTOR               **PartitionDescs;
-    UINTN                                  PartitionDescsNo;
-    UDF_FILE_SET_DESCRIPTOR                **FileSetDescs;
-    UINTN                                  FileSetDescsNo;
-  } Volume;
-  struct {
-    VOID                                   *FileEntry;
-    UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
-  } Root;
-  struct {
-    VOID                                   *FileEntry;
-    UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc;
-    struct {
-      UINT64                               AedAdsOffset;
-      UINT64                               AedAdsLength;
-      UINT64                               AdOffset;
-      UINT64                               FidOffset;
-    } DirectoryEntryInfo;
-  } File;
-
+  UDF_VOLUME_INFO                        Volume;
+  UDF_FILE_INFO                          Root;
+  UDF_FILE_INFO                          File;
+  UDF_READ_DIRECTORY_INFO                ReadDirInfo;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL        *SimpleFs;
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
@@ -737,9 +744,8 @@ EFI_STATUS
 GetFileSize (
   IN EFI_BLOCK_IO_PROTOCOL          *BlockIo,
   IN EFI_DISK_IO_PROTOCOL           *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR       **PartitionDescs,
-  IN UINTN                          PartitionDescsNo,
-  IN VOID                           *FileEntryData,
+  IN UDF_VOLUME_INFO                *Volume,
+  IN UDF_FILE_INFO                  *File,
   OUT UINT64                        *Size
   );
 
@@ -747,10 +753,8 @@ EFI_STATUS
 ReadFileData (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
-  IN UINTN                                   PartitionDescsNo,
-  IN VOID                                    *FileEntryData,
+  IN UDF_VOLUME_INFO                         *Volume,
+  IN UDF_FILE_INFO                           *File,
   IN UINT64                                  FileSize,
   IN OUT UINT64                              *CurrentFilePosition,
   IN OUT VOID                                *Buffer,
@@ -761,21 +765,16 @@ EFI_STATUS
 ReadDirectoryEntry (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_VOLUME_INFO                         *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
-  IN UINTN                                   PartitionDescsNo,
   IN VOID                                    *FileEntryData,
-  IN OUT UINT64                              *AedAdsOffset,
-  IN OUT UINT64                              *AedAdsLength,
-  IN OUT UINT64                              *AdOffset,
-  IN OUT UINT64                              *FidOffset,
+  IN OUT UDF_READ_DIRECTORY_INFO             *ReadDirInfo,
   OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc
   );
 
 EFI_STATUS
 SetFileInfo (
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  IN VOID                             *FileEntryData,
+  IN UDF_FILE_INFO                    *File,
   IN UINT64                           FileSize,
   IN CHAR16                           *FileName,
   IN OUT UINTN                        *BufferSize,
@@ -791,18 +790,23 @@ IsSupportedUdfVolume (
 
 EFI_STATUS
 ReadVolumeFileStructure (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          ***LogicalVolDescs,
-  OUT UINTN                                  *LogicalVolDescsNo,
-  OUT UDF_PARTITION_DESCRIPTOR               ***PartitionDescs,
-  OUT UINTN                                  *PartitionDescsNo
+  IN EFI_BLOCK_IO_PROTOCOL               *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                *DiskIo,
+  OUT UDF_VOLUME_INFO                    *Volume
+  );
+
+EFI_STATUS
+FindFileEntry (
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
+  OUT VOID                            **FileEntry
   );
 
 UINT64
 GetLsnFromLongAd (
-  IN UDF_PARTITION_DESCRIPTOR         **PartitionDescs,
-  IN UINTN                            PartitionDescsNo,
+  IN UDF_VOLUME_INFO                  *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd
   );
 
@@ -816,22 +820,7 @@ EFI_STATUS
 GetFileSetDescriptors (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_LOGICAL_VOLUME_DESCRIPTOR           **LogicalVolDescs,
-  IN UINTN                                   LogicalVolDescsNo,
-  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
-  IN UINTN                                   PartitionDescsNo,
-  OUT UDF_FILE_SET_DESCRIPTOR                ***FileSetDescs,
-  OUT UINTN                                  *FileSetDescsNo
-  );
-
-EFI_STATUS
-FindFileEntryFromLongAd (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
-  IN UINTN                                   PartitionDescsNo,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *LongAd,
-  OUT VOID                                   **FileEntry
+  IN OUT UDF_VOLUME_INFO                     *Volume
   );
 
 EFI_STATUS
@@ -844,21 +833,18 @@ EFI_STATUS
 FindFile (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_VOLUME_INFO                         *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN UDF_PARTITION_DESCRIPTOR                **PartitionDescs,
-  IN UINTN                                   PartitionDescsNo,
   IN CHAR16                                  *FileName,
   IN VOID                                    *FileEntryData,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc,
-  OUT VOID                                   **FoundFileEntry
+  OUT UDF_FILE_INFO                          *File
   );
 
 EFI_STATUS
 GetAedAdsData (
   IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
   IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_PARTITION_DESCRIPTOR         **PartitionDescs,
-  IN UINTN                            PartitionDescsNo,
+  IN UDF_VOLUME_INFO                  *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd,
   OUT UINT64                          *Offset,
   OUT UINT64                          *Length
