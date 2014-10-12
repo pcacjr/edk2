@@ -198,7 +198,7 @@ UdfOpen (
   EFI_TPL                                OldTpl;
   EFI_STATUS                             Status;
   PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  CHAR16                                 *String;
+  CHAR16                                 String[UDF_PATH_LENGTH];
   UDF_FILE_INFO                          File;
   CHAR16                                 *TempString;
   CHAR16                                 *FileNameSavedPointer;
@@ -215,7 +215,6 @@ UdfOpen (
   BOOLEAN                                IsRootDirectory;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
-  String = NULL;
 
   if (!This || !NewHandle || !FileName) {
     Status = EFI_INVALID_PARAMETER;
@@ -225,15 +224,9 @@ UdfOpen (
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
   FileName = MangleFileName (FileName);
-  if ((!FileName) || (!*FileName)) {
+  if (!FileName || !*FileName) {
     Status = EFI_NOT_FOUND;
     goto ErrorBadFileName;
-  }
-
-  String = (CHAR16 *)AllocatePool ((StrLen (FileName) + 1) * sizeof (CHAR16));
-  if (!String) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocString;
   }
 
   ZeroMem ((VOID *)&File, sizeof (UDF_FILE_INFO));
@@ -251,7 +244,7 @@ UdfOpen (
       break;
     }
 
-    TempString = String;
+    TempString = &String[0];
     while ((*FileName) && (*FileName != L'\\')) {
       *TempString++ = *FileName++;
     }
@@ -265,7 +258,7 @@ UdfOpen (
     Found             = FALSE;
     IsRootDirectory   = FALSE;
 
-    if (!*String) {
+    if (!String[0]) {
       if (!*FileName) {
 	Found             = TRUE;
 	IsRootDirectory   = TRUE;
@@ -338,8 +331,8 @@ UdfOpen (
 
   if (!File.FileEntry && !File.FileIdentifierDesc) {
     if (IsRootDirectory) {
-      NewPrivFileData->AbsoluteFileName   = NULL;
-      NewPrivFileData->FileName           = NULL;
+      NewPrivFileData->AbsoluteFileName[0]   = L'\0';
+      NewPrivFileData->FileName[0]           = L'\0';
 
       Status = DuplicateFileEntry (
                                BlockIo,
@@ -367,27 +360,7 @@ UdfOpen (
       goto HandleRootDirectory;
     }
 
-    if ((PrivFileData->AbsoluteFileName) && (PrivFileData->FileName)) {
-      NewPrivFileData->AbsoluteFileName =
-	(CHAR16 *)AllocatePool (
-                           (StrLen (PrivFileData->AbsoluteFileName) + 1) *
-                           sizeof(CHAR16)
-                           );
-      if (!NewPrivFileData->AbsoluteFileName) {
-	Status = EFI_OUT_OF_RESOURCES;
-	goto ErrorAllocAbsFileName;
-      }
-
-      NewPrivFileData->FileName =
-	(CHAR16 *)AllocatePool (
-                           (StrLen (PrivFileData->FileName) + 1) *
-                           sizeof(CHAR16)
-                           );
-      if (!NewPrivFileData->FileName) {
-	Status = EFI_OUT_OF_RESOURCES;
-	goto ErrorAllocFileName;
-      }
-
+    if (PrivFileData->AbsoluteFileName[0] && PrivFileData->FileName[0]) {
       StrCpy (
 	NewPrivFileData->AbsoluteFileName,
 	PrivFileData->AbsoluteFileName
@@ -418,23 +391,8 @@ UdfOpen (
 
   FileName = FileNameSavedPointer;
 
-  NewPrivFileData->AbsoluteFileName =
-    (CHAR16 *)AllocatePool (
-                      (((PrivFileData->AbsoluteFileName ?
-			 StrLen (PrivFileData->AbsoluteFileName) :
-			 0) +
-			StrLen (FileName)) *
-		       sizeof (CHAR16)) +
-		      (2 * sizeof (CHAR16))
-                      );
-  if (!NewPrivFileData->AbsoluteFileName) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocAbsFileName;
-  }
-
-  NewPrivFileData->AbsoluteFileName[0] = L'\0';
-  if (PrivFileData->AbsoluteFileName) {
-    StrCat (
+  if (PrivFileData->AbsoluteFileName[0]) {
+    StrCpy (
       NewPrivFileData->AbsoluteFileName,
       PrivFileData->AbsoluteFileName
       );
@@ -442,27 +400,14 @@ UdfOpen (
   }
 
   StrCat (NewPrivFileData->AbsoluteFileName, FileName);
+  MangleFileName (NewPrivFileData->AbsoluteFileName);
 
-  NewPrivFileData->AbsoluteFileName = MangleFileName (
-                                         NewPrivFileData->AbsoluteFileName
-                                         );
-
-  FileName = NewPrivFileData->AbsoluteFileName;
+  FileName = &NewPrivFileData->AbsoluteFileName[0];
   while ((TempFileName = StrStr (FileName, L"\\"))) {
     FileName = TempFileName + 1;
   }
 
-  NewPrivFileData->FileName = (CHAR16 *)AllocatePool (
-                                                (StrLen (FileName) + 1) *
-						sizeof (CHAR16)
-                                                );
-  if (!NewPrivFileData->FileName) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocFileName;
-  }
-
-  NewPrivFileData->FileName[0] = L'\0';
-  StrCat (NewPrivFileData->FileName, FileName);
+  StrCpy (NewPrivFileData->FileName, FileName);
 
   CopyMem (
     (VOID *)&NewPrivFileData->File,
@@ -492,22 +437,12 @@ HandleCurrentDirectory:
     );
 
   *NewHandle = &NewPrivFileData->FileIo;
-
   gBS->RestoreTPL (OldTpl);
   return Status;
 
 ErrorGetFileSize:
-ErrorAllocFileName:
-ErrorAllocAbsFileName:
 ErrorDupFid:
 ErrorDupFe:
-  if (NewPrivFileData->AbsoluteFileName) {
-    FreePool ((VOID *)NewPrivFileData->AbsoluteFileName);
-  }
-  if (NewPrivFileData->FileName) {
-    FreePool ((VOID *)NewPrivFileData->FileName);
-  }
-
   FreePool ((VOID *)NewPrivFileData);
 
 ErrorAllocNewPrivFileData:
@@ -519,9 +454,6 @@ ErrorAllocNewPrivFileData:
   }
 
 ErrorFindFile:
-  FreePool ((VOID *)String);
-
-ErrorAllocString:
 ErrorBadFileName:
 ErrorInvalidParams:
   gBS->RestoreTPL (OldTpl);
@@ -561,12 +493,12 @@ UdfRead (
   UDF_FILE_INFO                          FoundFile;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *NewFileIdentifierDesc;
   VOID                                   *NewFileEntryData;
-  CHAR16                                 *FoundFileName;
+  CHAR16                                 FileName[UDF_FILENAME_LENGTH];
   UINT64                                 FileSize;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
-  if ((!This) || (!Buffer)) {
+  if (!This || !Buffer) {
     Status = EFI_INVALID_PARAMETER;
     goto ErrorInvalidParams;
   }
@@ -579,7 +511,6 @@ UdfRead (
   File                    = &PrivFileData->File;
   ReadDirInfo             = &PrivFileData->ReadDirInfo;
   NewFileIdentifierDesc   = NULL;
-  FoundFileName           = NULL;
   NewFileEntryData        = NULL;
 
   if (IS_FID_NORMAL_FILE (File->FileIdentifierDesc)) {
@@ -650,7 +581,7 @@ ReadNextEntry:
       goto ErrorFindFe;
     }
 
-    Status = GetFileNameFromFid (NewFileIdentifierDesc, &FoundFileName);
+    Status = GetFileNameFromFid (NewFileIdentifierDesc, FileName);
     if (EFI_ERROR (Status)) {
       goto ErrorGetFileName;
     }
@@ -672,7 +603,7 @@ ReadNextEntry:
     Status = SetFileInfo (
 		     &FoundFile,
 		     FileSize,
-		     FoundFileName,
+		     FileName,
 		     BufferSize,
 		     Buffer
                      );
@@ -690,9 +621,6 @@ ReadNextEntry:
 
 ErrorSetFileInfo:
 ErrorGetFileSize:
-  if (FoundFileName) {
-    FreePool ((VOID *)FoundFileName);
-  }
 ErrorGetFileName:
   if (NewFileEntryData) {
     FreePool (NewFileEntryData);
@@ -743,14 +671,14 @@ UdfClose (
 
   if (PrivFileData->IsRootDirectory) {
     if (PrivFileData->Root.FileEntry) {
-      FreePool ((VOID *)PrivFileData->Root.FileEntry);
+      FreePool (PrivFileData->Root.FileEntry);
     }
     if (PrivFileData->Root.FileIdentifierDesc) {
       FreePool ((VOID *)PrivFileData->Root.FileIdentifierDesc);
     }
   } else {
     if (PrivFileData->File.FileEntry) {
-      FreePool ((VOID *)PrivFileData->File.FileEntry);
+      FreePool (PrivFileData->File.FileEntry);
     }
     if (PrivFileData->File.FileIdentifierDesc) {
       FreePool ((VOID *)PrivFileData->File.FileIdentifierDesc);
@@ -758,7 +686,6 @@ UdfClose (
   }
 
 Exit:
-
   gBS->RestoreTPL (OldTpl);
   return Status;
 }
@@ -840,7 +767,7 @@ UdfGetPosition (
   EFI_STATUS               Status;
   PRIVATE_UDF_FILE_DATA   *PrivFileData;
 
-  if ((!This) || (!Position)) {
+  if (!This || !Position) {
     return EFI_INVALID_PARAMETER;
   }
 
@@ -965,7 +892,7 @@ UdfGetInfo (
   CHAR16                                 *CharP;
   UINTN                                  Index;
 
-  if ((!This) || (!InformationType) || (!BufferSize) || (!Buffer)) {
+  if (!This || !InformationType || !BufferSize || !Buffer) {
     return EFI_INVALID_PARAMETER;
   }
 
@@ -1213,11 +1140,11 @@ StartMainVolumeDescriptorSequence (
   return Status;
 
 ErrorAllocPd:
+ErrorAllocLvd:
   for (Index = 0; Index < Volume->PartitionDescsNo; Index++) {
     FreePool ((VOID *)Volume->PartitionDescs[Index]);
   }
 
-ErrorAllocLvd:
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     FreePool ((VOID *)Volume->LogicalVolDescs[Index]);
   }
@@ -1556,47 +1483,46 @@ DuplicateFileEntry (
 EFI_STATUS
 GetFileNameFromFid (
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  OUT CHAR16                          **FileName
+  OUT CHAR16                          *FileName
   )
 {
-  CHAR8                               *AsciiFileName;
-  EFI_STATUS                          Status;
+  UINT8                               *OstaCompressed;
+  UINT8                               CompressionId;
+  UINT8                               Length;
+  UINTN                               Index;
+  CHAR16                              *Foobar;
 
-  AsciiFileName = (CHAR8 *)AllocatePool (
-                                    FileIdentifierDesc->LengthOfFileIdentifier *
-                                    sizeof (CHAR8)
-                                    );
-  if (!AsciiFileName) {
-    return EFI_OUT_OF_RESOURCES;
+  OstaCompressed =
+    (UINT8 *)(
+           (UINT8 *)&FileIdentifierDesc->Data[0] +
+	   FileIdentifierDesc->LengthOfImplementationUse
+           );
+  CompressionId = OstaCompressed[0];
+  //
+  // Check for valid compression ID
+  //
+  if (CompressionId != 8 && CompressionId != 16) {
+    return EFI_VOLUME_CORRUPTED;
   }
 
-  Status = EFI_SUCCESS;
+  Foobar = FileName;
+  Length = FileIdentifierDesc->LengthOfFileIdentifier;
+  for (Index = 1; Index < Length; Index++) {
+    if (CompressionId == 16) {
+      *FileName = OstaCompressed[Index++] << 8;
+    } else {
+      *FileName = 0;
+    }
 
-  AsciiStrnCpy (
-    AsciiFileName,
-    (CONST CHAR8 *)(
-      (UINT8 *)&FileIdentifierDesc->Data[0] +
-      FileIdentifierDesc->LengthOfImplementationUse + 1
-      ),
-    FileIdentifierDesc->LengthOfFileIdentifier - 1
-    );
+    if (Index < Length) {
+      *FileName |= OstaCompressed[Index];
+    }
 
-  AsciiFileName[FileIdentifierDesc->LengthOfFileIdentifier - 1] = '\0';
-
-  *FileName = (CHAR16 *)AllocatePool (
-                                 FileIdentifierDesc->LengthOfFileIdentifier *
-                                 sizeof (CHAR16)
-                                 );
-  if (!*FileName) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocFileName;
+    FileName++;
   }
 
-  *FileName = AsciiStrToUnicodeStr (AsciiFileName, *FileName);
-
-ErrorAllocFileName:
-  FreePool ((VOID *)AsciiFileName);
-  return Status;
+  *FileName = L'\0';
+  return EFI_SUCCESS;
 }
 
 EFI_STATUS
@@ -1617,7 +1543,7 @@ FindFile (
   UDF_READ_DIRECTORY_INFO                    ReadDirInfo;
   BOOLEAN                                    Found;
   UINTN                                      FileNameLength;
-  CHAR16                                     *FoundFileName;
+  CHAR16                                     FoundFileName[UDF_FILENAME_LENGTH];
   VOID                                       *CompareFileEntry;
 
   if (IS_EFE (FileEntryData)) {
@@ -1666,7 +1592,7 @@ FindFile (
 	goto ReadNextEntry;
       }
 
-      Status = GetFileNameFromFid (FileIdentifierDesc, &FoundFileName);
+      Status = GetFileNameFromFid (FileIdentifierDesc, FoundFileName);
       if (EFI_ERROR (Status)) {
 	break;
       }
