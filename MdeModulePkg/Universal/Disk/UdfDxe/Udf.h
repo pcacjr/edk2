@@ -445,8 +445,8 @@ typedef struct {
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   EFI_FILE_PROTOCOL                      FileIo;
-  CHAR16                                 *AbsoluteFileName;
-  CHAR16                                 *FileName;
+  CHAR16                                 AbsoluteFileName[UDF_PATH_LENGTH];
+  CHAR16                                 FileName[UDF_FILENAME_LENGTH];
   UINT64                                 FileSize;
   UINT64                                 FilePosition;
   BOOLEAN                                IsRootDirectory;
@@ -826,7 +826,7 @@ GetFileSetDescriptors (
 EFI_STATUS
 GetFileNameFromFid (
   IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  OUT CHAR16                          **FileName
+  OUT CHAR16                          *FileName
   );
 
 EFI_STATUS
