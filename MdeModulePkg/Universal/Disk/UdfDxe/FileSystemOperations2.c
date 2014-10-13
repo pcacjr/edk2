@@ -206,6 +206,7 @@ UdfOpen (
   EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
   EFI_DISK_IO_PROTOCOL                   *DiskIo;
   UDF_VOLUME_INFO                        *Volume;
+  VOID                                   *FileEntry;
   VOID                                   *ParentFileEntry;
   UDF_FILE_IDENTIFIER_DESCRIPTOR         *PrevFileIdentifierDesc;
   BOOLEAN                                FreeFileEntry;
@@ -245,13 +246,13 @@ UdfOpen (
     }
 
     TempString = &String[0];
-    while ((*FileName) && (*FileName != L'\\')) {
+    while (*FileName && *FileName != L'\\') {
       *TempString++ = *FileName++;
     }
 
     *TempString = L'\0';
 
-    if ((*FileName) && (*FileName == L'\\')) {
+    if (*FileName && *FileName == L'\\') {
       FileName++;
     }
 
@@ -303,6 +304,24 @@ UdfOpen (
 
     if (EFI_ERROR (Status)) {
       goto ErrorFindFile;
+    }
+
+    if (IS_FE_SYMLINK (File.FileEntry)) {
+      FileEntry = File.FileEntry;
+      FreePool ((VOID *)File.FileIdentifierDesc);
+      Status = FindFileFromSymlink (
+                                BlockIo,
+				DiskIo,
+				Volume,
+				&PrevFileIdentifierDesc->Icb,
+				ParentFileEntry,
+				FileEntry,
+				&File
+                                );
+      FreePool ((VOID *)FileEntry);
+      if (EFI_ERROR (Status)) {
+	goto ErrorFindFileFromSymlink;
+      }
     }
 
     if (!File.FileIdentifierDesc && !File.FileEntry) {
@@ -453,6 +472,7 @@ ErrorAllocNewPrivFileData:
     FreePool ((VOID *)File.FileIdentifierDesc);
   }
 
+ErrorFindFileFromSymlink:
 ErrorFindFile:
 ErrorBadFileName:
 ErrorInvalidParams:
@@ -545,7 +565,7 @@ UdfRead (
       goto DoneWithNoMoreDirEnts;
     }
 
-ReadNextEntry:
+SkipParentFid:
     Status = ReadDirectoryEntry (
                              BlockIo,
 			     DiskIo,
@@ -566,8 +586,8 @@ ReadNextEntry:
     }
 
     if (IS_FID_PARENT_FILE (NewFileIdentifierDesc)) {
-      FreePool (NewFileIdentifierDesc);
-      goto ReadNextEntry;
+      FreePool ((VOID *)NewFileIdentifierDesc);
+      goto SkipParentFid;
     }
 
     Status = FindFileEntry (
@@ -581,13 +601,40 @@ ReadNextEntry:
       goto ErrorFindFe;
     }
 
-    Status = GetFileNameFromFid (NewFileIdentifierDesc, FileName);
-    if (EFI_ERROR (Status)) {
-      goto ErrorGetFileName;
-    }
+    if (IS_FE_SYMLINK (NewFileEntryData)) {
+      Status = FindFileFromSymlink (
+                                BlockIo,
+				DiskIo,
+				Volume,
+				&File->FileIdentifierDesc->Icb,
+				File->FileEntry,
+				NewFileEntryData,
+				&FoundFile
+                                );
+      if (EFI_ERROR (Status)) {
+	goto ErrorFindFileFromSymlink;
+      }
 
-    FoundFile.FileIdentifierDesc   = NewFileIdentifierDesc;
-    FoundFile.FileEntry            = NewFileEntryData;
+      FreePool ((VOID *)NewFileEntryData);
+      NewFileEntryData = FoundFile.FileEntry;
+
+      Status = GetFileNameFromFid (NewFileIdentifierDesc, FileName);
+      if (EFI_ERROR (Status)) {
+	FreePool ((VOID *)FoundFile.FileIdentifierDesc);
+	goto ErrorGetFileName;
+      }
+
+      FreePool ((VOID *)NewFileIdentifierDesc);
+      NewFileIdentifierDesc = FoundFile.FileIdentifierDesc;
+    } else {
+      FoundFile.FileIdentifierDesc   = NewFileIdentifierDesc;
+      FoundFile.FileEntry            = NewFileEntryData;
+
+      Status = GetFileNameFromFid (FoundFile.FileIdentifierDesc, FileName);
+      if (EFI_ERROR (Status)) {
+	goto ErrorGetFileName;
+      }
+    }
 
     Status = GetFileSize (
                       BlockIo,
@@ -622,6 +669,7 @@ ReadNextEntry:
 ErrorSetFileInfo:
 ErrorGetFileSize:
 ErrorGetFileName:
+ErrorFindFileFromSymlink:
   if (NewFileEntryData) {
     FreePool (NewFileEntryData);
   }
@@ -1370,6 +1418,163 @@ ReadVolumeFileStructure (
 }
 
 EFI_STATUS
+FindFileFromSymlink (
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *ParentIcb,
+  IN VOID                             *ParentFileEntryData,
+  IN VOID                             *FileEntryData,
+  OUT UDF_FILE_INFO                   *File
+  )
+{
+  EFI_STATUS                          Status;
+  UDF_EXTENDED_FILE_ENTRY             *ExtendedFileEntry;
+  UDF_FILE_ENTRY                      *FileEntry;
+  UINT64                              Length;
+  UINT8                               *Data;
+  UINT8                               *EndData;
+  UDF_PATH_COMPONENT                  *PathComp;
+  UINT8                               PathCompLength;
+  CHAR16                              FileName[UDF_FILENAME_LENGTH];
+  CHAR16                              *C;
+  UINTN                               Index;
+  UINT8                               CompressionId;
+  UDF_LONG_ALLOCATION_DESCRIPTOR      Icb;
+
+  Status = EFI_VOLUME_CORRUPTED;
+
+  switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
+    case INLINE_DATA:
+      if (IS_EFE (FileEntryData)) {
+	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
+
+	Length   = ExtendedFileEntry->InformationLength;
+	Data     = (UINT8 *)(
+                        &ExtendedFileEntry->Data[0] +
+			ExtendedFileEntry->LengthOfExtendedAttributes
+                        );
+      } else if (IS_FE (FileEntryData)) {
+	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
+
+	Length   = FileEntry->InformationLength;
+	Data     = (UINT8 *)(
+                        &FileEntry->Data[0] +
+			FileEntry->LengthOfExtendedAttributes
+                        );
+      }
+
+      EndData = (UINT8 *)(Data + Length);
+      CopyMem ((VOID *)&Icb, (VOID *)ParentIcb, sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR));
+      for (;;) {
+	PathComp = (UDF_PATH_COMPONENT *)Data;
+	PathCompLength = PathComp->LengthOfComponentIdentifier;
+	switch (PathComp->ComponentType) {
+	  case 3:
+	    FileName[0] = '\0';
+	    break;
+	  case 5:
+	    CompressionId = PathComp->ComponentIdentifier[0];
+	    //
+	    // Check for valid compression ID
+	    //
+	    if (CompressionId != 8 && CompressionId != 16) {
+	      return EFI_VOLUME_CORRUPTED;
+	    }
+
+	    C = FileName;
+	    for (Index = 1; Index < PathCompLength; Index++) {
+	      if (CompressionId == 16) {
+		*C = *(UINT8 *)(
+                           (UINT8 *)PathComp->ComponentIdentifier +
+			   Index
+                           ) << 8;
+		Index++;
+	      } else {
+		*C = 0;
+	      }
+
+	      if (Index < Length) {
+		*C |= *(UINT8 *)(
+                            (UINT8 *)PathComp->ComponentIdentifier +
+			    Index
+                            );
+	      }
+
+	      C++;
+	    }
+
+	    *C = L'\0';
+	    break;
+	  default:
+	    Print (L"WARNING: unhandled Component Type\n");
+	}
+
+	if (!FileName[0]) {
+	  Print (L"Go to parent dir...\n");
+	  Status = FindFile (
+                         BlockIo,
+			 DiskIo,
+			 Volume,
+			 &Icb,
+			 L"..",
+			 ParentFileEntryData,
+			 File
+                         );
+	  if (EFI_ERROR (Status)) {
+	    goto ErrorFindFile;
+	  }
+	  Print (L"SUCCESS!!!\n");
+	} else {
+	  Print (L"Go to %s\n", FileName);
+	  Status = FindFile (
+                         BlockIo,
+			 DiskIo,
+			 Volume,
+			 &Icb,
+			 FileName,
+			 ParentFileEntryData,
+			 File
+                         );
+	  if (EFI_ERROR (Status)) {
+	    goto ErrorFindFile;
+	  }
+	  Print (L"SUCCESS!!!\n");
+	}
+
+	Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
+	if (Data >= EndData) {
+	  break;
+	}
+
+	CopyMem (
+	  (VOID *)&Icb,
+	  (VOID *)&File->FileIdentifierDesc->Icb,
+	  sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR)
+	  );
+
+	(VOID)GetFileNameFromFid (File->FileIdentifierDesc, FileName);
+	Print (L"---> at %s\n", FileName);
+
+	FreePool ((VOID *)File->FileIdentifierDesc);
+	ParentFileEntryData = File->FileEntry;
+      }
+
+      Status = EFI_SUCCESS;
+      break;
+    case LONG_ADS_SEQUENCE:
+      Status = EFI_SUCCESS;
+      break;
+    case SHORT_ADS_SEQUENCE:
+      Status = EFI_SUCCESS;
+      break;
+  }
+
+ErrorFindFile:
+  return Status;
+}
+
+EFI_STATUS
 FindFileEntry (
   IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
   IN EFI_DISK_IO_PROTOCOL             *DiskIo,
@@ -1378,9 +1583,9 @@ FindFileEntry (
   OUT VOID                            **FileEntry
   )
 {
-  EFI_STATUS                                 Status;
-  UINT64                                     Lsn;
-  UINT32                                     BlockSize;
+  EFI_STATUS                          Status;
+  UINT64                              Lsn;
+  UINT32                              BlockSize;
 
   Lsn = GetLsnFromLongAd (Volume, Icb);
   if (!Lsn) {
@@ -1405,7 +1610,7 @@ FindFileEntry (
     goto ErrorReadDiskBlk;
   }
 
-  if ((!IS_FE (*FileEntry)) && (!IS_EFE (*FileEntry))) {
+  if (!IS_FE (*FileEntry) && !IS_EFE (*FileEntry)) {
     Status = EFI_VOLUME_CORRUPTED;
     goto ErrorInvalidFe;
   }
@@ -1490,7 +1695,6 @@ GetFileNameFromFid (
   UINT8                               CompressionId;
   UINT8                               Length;
   UINTN                               Index;
-  CHAR16                              *Foobar;
 
   OstaCompressed =
     (UINT8 *)(
@@ -1505,7 +1709,6 @@ GetFileNameFromFid (
     return EFI_VOLUME_CORRUPTED;
   }
 
-  Foobar = FileName;
   Length = FileIdentifierDesc->LengthOfFileIdentifier;
   for (Index = 1; Index < Length; Index++) {
     if (CompressionId == 16) {
@@ -1527,37 +1730,25 @@ GetFileNameFromFid (
 
 EFI_STATUS
 FindFile (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_VOLUME_INFO                         *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN CHAR16                                  *FileName,
-  IN VOID                                    *FileEntryData,
-  OUT UDF_FILE_INFO                          *File
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *ParentIcb,
+  IN CHAR16                           *FileName,
+  IN VOID                             *FileEntryData,
+  OUT UDF_FILE_INFO                   *File
   )
 {
-  EFI_STATUS                                 Status;
-  UDF_FILE_ENTRY                             *FileEntry;
-  UDF_EXTENDED_FILE_ENTRY                    *ExtendedFileEntry;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR             *FileIdentifierDesc;
-  UDF_READ_DIRECTORY_INFO                    ReadDirInfo;
-  BOOLEAN                                    Found;
-  UINTN                                      FileNameLength;
-  CHAR16                                     FoundFileName[UDF_FILENAME_LENGTH];
-  VOID                                       *CompareFileEntry;
+  EFI_STATUS                          Status;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR      *FileIdentifierDesc;
+  UDF_READ_DIRECTORY_INFO             ReadDirInfo;
+  BOOLEAN                             Found;
+  UINTN                               FileNameLength;
+  CHAR16                              FoundFileName[UDF_FILENAME_LENGTH];
+  VOID                                *CompareFileEntry;
 
-  if (IS_EFE (FileEntryData)) {
-    ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-
-    if (!IS_EFE_DIRECTORY (ExtendedFileEntry)) {
-      return EFI_NOT_FOUND;
-    }
-  } else if (IS_FE (FileEntryData)) {
-    FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-
-    if (!IS_FE_DIRECTORY (FileEntry)) {
-      return EFI_NOT_FOUND;
-    }
+  if (!IS_FE_DIRECTORY (FileEntryData)) {
+    return EFI_NOT_FOUND;
   }
 
   ZeroMem ((VOID *)&ReadDirInfo, sizeof (UDF_READ_DIRECTORY_INFO));
@@ -2254,8 +2445,7 @@ GetAedAdsData (
 
   Data = AllocatePool (ExtentLength);
   if (!Data) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto Exit;
+    return EFI_OUT_OF_RESOURCES;
   }
 
   Lsn = GetLsnFromLongAd (Volume, LongAd);

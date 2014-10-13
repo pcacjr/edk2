@@ -92,7 +92,7 @@ MangleFileName (
   CHAR16           *TempFileName;
   UINTN            BackslashesNo;
 
-  if ((!FileName) || ((FileName) && (!*FileName))) {
+  if (!FileName || !*FileName) {
     FileName = NULL;
     goto Exit;
   }
