@@ -41,60 +41,66 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 // As specified in ECMA-167 specification, the logical sector size shall be
 // 2048 bytes.
 //
-#define LOGICAL_SECTOR_SIZE                   ((UINT64)0x800ULL)
-
+#define LOGICAL_SECTOR_SIZE                   ((UINT64)0x0000000000000800ULL)
 #define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
-#define BEA_DESCRIPTOR_LSN_OFFSET             ((UINT64)0x8000ULL)
+#define BEA_DESCRIPTOR_LSN_OFFSET             ((UINT64)0x0000000000008000ULL)
+
+#define _GET_TAG_ID(_Pointer) \
+  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier)
 
 #define IS_PVD(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 1)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 1))
 #define IS_AVDP(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 2)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 2))
 #define IS_PD(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 5)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 5))
 #define IS_LVD(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 6)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 6))
 #define IS_TD(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 8)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 8))
 #define IS_FSD(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 256)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 256))
 #define IS_FE(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 261)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 261))
 #define IS_EFE(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 266)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 266))
 #define IS_FID(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 257)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 257))
 #define IS_AED(_Pointer) \
-  (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier == 258)
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 258))
+
+#define _GET_FILETYPE(_Pointer) \
+  (IS_FE (_Pointer) ? \
+   (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType) \
+   : \
+   (((UDF_EXTENDED_FILE_ENTRY *)(_Pointer))->IcbTag.FileType))
 
 #define IS_FE_DIRECTORY(_Pointer) \
-  (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
+  ((BOOLEAN)(_GET_FILETYPE (_Pointer) == 4))
 #define IS_FE_STANDARD_FILE(_Pointer) \
-  (((UDF_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 5)
-#define IS_EFE_DIRECTORY(_Pointer) \
-  (((UDF_EXTENDED_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 4)
-#define IS_EFE_STANDARD_FILE(_Pointer) \
-  (((UDF_EXTENDED_FILE_ENTRY *)(_Pointer))->IcbTag.FileType == 5)
+  ((BOOLEAN)(_GET_FILETYPE (_Pointer) == 5))
+#define IS_FE_SYMLINK(_Pointer) \
+  ((BOOLEAN)(_GET_FILETYPE (_Pointer) == 12))
 
 #define HIDDEN_FILE                           (1 << 0)
 #define DIRECTORY_FILE                        (1 << 1)
 #define DELETED_FILE                          (1 << 2)
 #define PARENT_FILE                           (1 << 3)
 
+#define _GET_FILE_CHARS(_Pointer) \
+  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics)
+
 #define IS_FID_HIDDEN_FILE(_Pointer) \
-  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
-   HIDDEN_FILE)
+  ((BOOLEAN)(_GET_FILE_CHARS (_Pointer) & HIDDEN_FILE))
 #define IS_FID_DIRECTORY_FILE(_Pointer) \
-  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
-   DIRECTORY_FILE)
+  ((BOOLEAN)(_GET_FILE_CHARS (_Pointer) & DIRECTORY_FILE))
 #define IS_FID_DELETED_FILE(_Pointer) \
-  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
-   DELETED_FILE)
+  ((BOOLEAN)(_GET_FILE_CHARS (_Pointer) & DELETED_FILE))
 #define IS_FID_PARENT_FILE(_Pointer) \
-  (((UDF_FILE_IDENTIFIER_DESCRIPTOR *)(_Pointer))->FileCharacteristics & \
-   PARENT_FILE)
+  ((BOOLEAN)(_GET_FILE_CHARS (_Pointer) & PARENT_FILE))
 #define IS_FID_NORMAL_FILE(_Pointer) \
-  ((!IS_FID_DIRECTORY_FILE (_Pointer)) && (!IS_FID_PARENT_FILE (_Pointer)))
+  ((BOOLEAN)(!IS_FID_DIRECTORY_FILE (_Pointer) && \
+	     !IS_FID_PARENT_FILE (_Pointer)))
 
 typedef enum {
   EXTENT_RECORDED_AND_ALLOCATED,
@@ -123,7 +129,7 @@ typedef enum {
 #define UDF_PATH_LENGTH       512
 
 #define GET_FID_FROM_ADS(_Data, _Offs) \
-  (UDF_FILE_IDENTIFIER_DESCRIPTOR *)((UINT8 *)(_Data) + (_Offs))
+  ((UDF_FILE_IDENTIFIER_DESCRIPTOR *)((UINT8 *)(_Data) + (_Offs)))
 
 #pragma pack(1)
 
@@ -136,7 +142,7 @@ typedef struct {
 #pragma pack()
 
 enum {
-  BEA_IDENTIFIER   = 0,
+  BEA_IDENTIFIER,
   VSD_IDENTIFIER_0,
   VSD_IDENTIFIER_1,
   TEA_IDENTIFIER,
@@ -398,6 +404,13 @@ typedef struct {
   UINT32                           LengthOfAllocationDescriptors;
   UINT8                            Data[0]; // L_EA + L_AD
 } UDF_EXTENDED_FILE_ENTRY;
+
+typedef struct {
+  UINT8                 ComponentType;
+  UINT8                 LengthOfComponentIdentifier;
+  UINT16                ComponentFileVersionNumber;
+  UINT8                 ComponentIdentifier[0];
+} UDF_PATH_COMPONENT;
 
 #pragma pack()
 
@@ -796,6 +809,17 @@ ReadVolumeFileStructure (
   );
 
 EFI_STATUS
+FindFileFromSymlink (
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *ParentIcb,
+  IN VOID                             *ParentFileEntryData,
+  IN VOID                             *FileEntryData,
+  OUT UDF_FILE_INFO                   *File
+  );
+
+EFI_STATUS
 FindFileEntry (
   IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
   IN EFI_DISK_IO_PROTOCOL             *DiskIo,
@@ -831,13 +855,13 @@ GetFileNameFromFid (
 
 EFI_STATUS
 FindFile (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_VOLUME_INFO                         *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN CHAR16                                  *FileName,
-  IN VOID                                    *FileEntryData,
-  OUT UDF_FILE_INFO                          *File
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *ParentIcb,
+  IN CHAR16                           *FileName,
+  IN VOID                             *FileEntryData,
+  OUT UDF_FILE_INFO                   *File
   );
 
 EFI_STATUS
