@@ -33,10 +33,10 @@
 [Sources]
   ComponentName.c
   FileName.c
-  FileSystemOperations2.c
+  FileSystemOperations.c
+  File.c
   Udf.c
   Udf.h
-
 
 [Packages]
   MdePkg/MdePkg.dec
