@@ -809,23 +809,33 @@ ReadVolumeFileStructure (
   );
 
 EFI_STATUS
-FindFileFromSymlink (
-  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *ParentIcb,
-  IN VOID                             *ParentFileEntryData,
-  IN VOID                             *FileEntryData,
-  OUT UDF_FILE_INFO                   *File
-  );
-
-EFI_STATUS
 FindFileEntry (
   IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
   IN EFI_DISK_IO_PROTOCOL             *DiskIo,
   IN UDF_VOLUME_INFO                  *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
   OUT VOID                            **FileEntry
+  );
+
+EFI_STATUS
+ResolveSymlink (
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN UDF_FILE_INFO                    *Parent,
+  IN VOID                             *FileEntryData,
+  OUT UDF_FILE_INFO                   *File
+  );
+
+EFI_STATUS
+InternalFindFile (
+  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
+  IN UDF_VOLUME_INFO                  *Volume,
+  IN CHAR16                           *FileName,
+  IN UDF_FILE_INFO                    *Parent,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb       OPTIONAL,
+  OUT UDF_FILE_INFO                   *File
   );
 
 UINT64
@@ -858,9 +868,10 @@ FindFile (
   IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
   IN EFI_DISK_IO_PROTOCOL             *DiskIo,
   IN UDF_VOLUME_INFO                  *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *ParentIcb,
-  IN CHAR16                           *FileName,
-  IN VOID                             *FileEntryData,
+  IN CHAR16                           *FilePath,
+  IN UDF_FILE_INFO                    *Root,
+  IN UDF_FILE_INFO                    *Parent,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb       OPTIONAL,
   OUT UDF_FILE_INFO                   *File
   );
 
