@@ -477,12 +477,9 @@ ResolveSymlink (
 
 	    *C = L'\0';
 	    break;
-	  default:
-	    Print (L"WARNING: unhandled Component Type\n");
 	}
 
 	if (!FileName[0]) {
-	  Print (L"Go to parent dir...\n");
 	  Status = InternalFindFile (
                          BlockIo,
 			 DiskIo,
@@ -495,9 +492,7 @@ ResolveSymlink (
 	  if (EFI_ERROR (Status)) {
 	    goto ErrorFindFile;
 	  }
-	  Print (L"SUCCESS!!!\n");
 	} else {
-	  Print (L"Go to %s\n", FileName);
 	  Status = InternalFindFile (
                          BlockIo,
 			 DiskIo,
@@ -510,7 +505,6 @@ ResolveSymlink (
 	  if (EFI_ERROR (Status)) {
 	    goto ErrorFindFile;
 	  }
-	  Print (L"SUCCESS!!!\n");
 	}
 
 	Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
@@ -696,7 +690,7 @@ InternalFindFile (
   IN UDF_VOLUME_INFO                  *Volume,
   IN CHAR16                           *FileName,
   IN UDF_FILE_INFO                    *Parent,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb       OPTIONAL,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
   OUT UDF_FILE_INFO                   *File
   )
 {
@@ -709,7 +703,6 @@ InternalFindFile (
   VOID                                *CompareFileEntry;
 
   if (!IS_FE_DIRECTORY (Parent->FileEntry)) {
-    Print (L"herereherhere\n");
     return EFI_NOT_FOUND;
   }
 
@@ -819,7 +812,7 @@ FindFile (
   IN CHAR16                           *FilePath,
   IN UDF_FILE_INFO                    *Root,
   IN UDF_FILE_INFO                    *Parent,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb       OPTIONAL,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
   OUT UDF_FILE_INFO                   *File
   )
 {
@@ -839,21 +832,24 @@ FindFile (
       *FileNamePointer++ = *FilePath++;
     }
 
-    Print (L"FindFile: FileName: %s\n", FileName);
-
     *FileNamePointer = L'\0';
-    if (!*FileNamePointer) {
-      Print (L"FileEntry: 0x%016lx\n", Parent->FileEntry);
-      Print (L"FileEntry: 0x%016lx\n", Root ? Root->FileEntry : 0);
-      Status = InternalFindFile (
-                             BlockIo,
-			     DiskIo,
-			     Volume,
-			     L"\\",
-			     &PreviousFile,
-			     Icb,
-			     File
-                             );
+    if (!FileName[0]) {
+      if (!Root) {
+        Status = InternalFindFile (
+                               BlockIo,
+			       DiskIo,
+			       Volume,
+			       L"\\",
+			       &PreviousFile,
+			       Icb,
+			       File
+                               );
+      } else {
+	DuplicateFe (BlockIo, Root->FileEntry, &File->FileEntry);
+	DuplicateFid (Root->FileIdentifierDesc, &File->FileIdentifierDesc);
+	Status = EFI_SUCCESS;
+      }
+
       ASSERT (!EFI_ERROR (Status));
     } else {
       Status = InternalFindFile (
@@ -899,7 +895,6 @@ FindFile (
     }
 
     CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
-
     if (*FilePath && *FilePath == L'\\') {
       FilePath++;
     }
