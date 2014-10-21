@@ -834,7 +834,7 @@ InternalFindFile (
   IN UDF_VOLUME_INFO                  *Volume,
   IN CHAR16                           *FileName,
   IN UDF_FILE_INFO                    *Parent,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb       OPTIONAL,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
   OUT UDF_FILE_INFO                   *File
   );
 
@@ -871,7 +871,7 @@ FindFile (
   IN CHAR16                           *FilePath,
   IN UDF_FILE_INFO                    *Root,
   IN UDF_FILE_INFO                    *Parent,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb       OPTIONAL,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
   OUT UDF_FILE_INFO                   *File
   );
 
