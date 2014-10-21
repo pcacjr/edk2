@@ -389,6 +389,33 @@ ReadVolumeFileStructure (
   return Status;
 }
 
+VOID
+GetInlineDataInformation (
+  IN  VOID                  *FileEntryData,
+  OUT VOID                  **Data,
+  OUT UINT64                *Length
+  )
+{
+  UDF_EXTENDED_FILE_ENTRY   *ExtendedFileEntry;
+  UDF_FILE_ENTRY            *FileEntry;
+
+  if (IS_EFE (FileEntryData)) {
+    ExtendedFileEntry   = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
+    *Length             = ExtendedFileEntry->InformationLength;
+    *Data               = (VOID *)(
+                              (UINT8 *)&ExtendedFileEntry->Data[0] +
+                              ExtendedFileEntry->LengthOfExtendedAttributes
+                              );
+  } else if (IS_FE (FileEntryData)) {
+    FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
+    *Length   = FileEntry->InformationLength;
+    *Data     = (VOID *)(
+                    (UINT8 *)&FileEntry->Data[0] +
+                    FileEntry->LengthOfExtendedAttributes
+                    );
+  }
+}
+
 EFI_STATUS
 ResolveSymlink (
   IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
@@ -400,10 +427,8 @@ ResolveSymlink (
   )
 {
   EFI_STATUS                          Status;
-  UDF_EXTENDED_FILE_ENTRY             *ExtendedFileEntry;
-  UDF_FILE_ENTRY                      *FileEntry;
-  UINT64                              Length;
   UINT8                               *Data;
+  UINT64                              Length;
   UINT8                               *EndData;
   UDF_PATH_COMPONENT                  *PathComp;
   UINT8                               PathCompLength;
@@ -417,24 +442,7 @@ ResolveSymlink (
 
   switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
-      if (IS_EFE (FileEntryData)) {
-	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-
-	Length   = ExtendedFileEntry->InformationLength;
-	Data     = (UINT8 *)(
-                        &ExtendedFileEntry->Data[0] +
-			ExtendedFileEntry->LengthOfExtendedAttributes
-                        );
-      } else if (IS_FE (FileEntryData)) {
-	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-
-	Length   = FileEntry->InformationLength;
-	Data     = (UINT8 *)(
-                        &FileEntry->Data[0] +
-			FileEntry->LengthOfExtendedAttributes
-                        );
-      }
-
+      GetInlineDataInformation (FileEntryData, (VOID **)&Data, &Length);
       EndData = (UINT8 *)(Data + Length);
       CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
       for (;;) {
@@ -528,14 +536,26 @@ ResolveSymlink (
       Status = EFI_SUCCESS;
       break;
     case LONG_ADS_SEQUENCE:
-      Status = EFI_SUCCESS;
+      Status = EFI_UNSUPPORTED;
       break;
     case SHORT_ADS_SEQUENCE:
-      Status = EFI_SUCCESS;
+      Status = EFI_UNSUPPORTED;
       break;
   }
 
+  return Status;
+
 ErrorFindFile:
+  if (CompareMem (
+	(VOID *)&PreviousFile,
+	(VOID *)Parent,
+	sizeof (UDF_FILE_INFO)
+	)
+    ) {
+    FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
+    FreePool (PreviousFile.FileEntry);
+  }
+
   return Status;
 }
 
@@ -825,7 +845,6 @@ FindFile (
   Status = EFI_NOT_FOUND;
 
   CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
-  ZeroMem ((VOID *)File, sizeof (UDF_FILE_INFO));
   while (*FilePath) {
     FileNamePointer = FileName;
     while (*FilePath && *FilePath != L'\\') {
@@ -849,8 +868,6 @@ FindFile (
 	DuplicateFid (Root->FileIdentifierDesc, &File->FileIdentifierDesc);
 	Status = EFI_SUCCESS;
       }
-
-      ASSERT (!EFI_ERROR (Status));
     } else {
       Status = InternalFindFile (
                              BlockIo,
@@ -860,7 +877,6 @@ FindFile (
 			     &PreviousFile,
 			     Icb,
 			     File);
-      ASSERT (!EFI_ERROR (Status));
     }
 
     if (EFI_ERROR (Status)) {
@@ -1563,8 +1579,6 @@ ReadDirectoryEntry (
   EFI_STATUS                                 Status;
   UINT32                                     BlockSize;
   UDF_FILE_IDENTIFIER_DESCRIPTOR             *FileIdentifierDesc;
-  UDF_EXTENDED_FILE_ENTRY                    *ExtendedFileEntry;
-  UDF_FILE_ENTRY                             *FileEntry;
   UINT64                                     Length;
   UINT8                                      *Data;
   UINT8                                      *AdsData;
@@ -1591,24 +1605,7 @@ ReadDirectoryEntry (
 
   switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
     case INLINE_DATA:
-      if (IS_EFE (FileEntryData)) {
-	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-
-	Length   = ExtendedFileEntry->InformationLength;
-	Data     = (UINT8 *)(
-                        &ExtendedFileEntry->Data[0] +
-			ExtendedFileEntry->LengthOfExtendedAttributes
-                        );
-      } else if (IS_FE (FileEntryData)) {
-	FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-
-	Length   = FileEntry->InformationLength;
-	Data     = (UINT8 *)(
-                        &FileEntry->Data[0] +
-			FileEntry->LengthOfExtendedAttributes
-                        );
-      }
-
+      GetInlineDataInformation (FileEntryData, (VOID **)&Data, &Length);
       do {
 	if (ReadDirInfo->FidOffset >= Length) {
 	  return EFI_DEVICE_ERROR;
