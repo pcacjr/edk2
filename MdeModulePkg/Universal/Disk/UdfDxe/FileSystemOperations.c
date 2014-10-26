@@ -171,13 +171,10 @@ ErrorAllocLvd:
 
 ErrorReadDiskBlk:
   FreePool (Buffer);
-
 ErrorAllocBuf:
   FreePool ((VOID *)Volume->PartitionDescs);
-
 ErrorAllocPds:
   FreePool ((VOID *)Volume->LogicalVolDescs);
-
 ErrorAllocLvds:
   return Status;
 }
@@ -415,6 +412,7 @@ ResolveSymlink (
   )
 {
   EFI_STATUS                          Status;
+  UDF_READ_FILE_INFO                  ReadFileInfo;
   UINT8                               *Data;
   UINT64                              Length;
   UINT8                               *EndData;
@@ -426,91 +424,88 @@ ResolveSymlink (
   UINT8                               CompressionId;
   UDF_FILE_INFO                       PreviousFile;
 
-  Status = EFI_VOLUME_CORRUPTED;
-  switch (GET_FE_RECORDING_FLAGS (FileEntryData)) {
-    case INLINE_DATA:
-      GetInlineDataInformation (FileEntryData, (VOID **)&Data, &Length);
-      EndData = (UINT8 *)(Data + Length);
-      CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
-      for (;;) {
-	PathComp = (UDF_PATH_COMPONENT *)Data;
-	PathCompLength = PathComp->LengthOfComponentIdentifier;
-	switch (PathComp->ComponentType) {
-	  case 3:
-	    FileName[0] = L'.';
-	    FileName[1] = L'.';
-	    FileName[2] = L'\0';
-	    break;
-	  case 5:
-	    CompressionId = PathComp->ComponentIdentifier[0];
-	    //
-	    // Check for valid compression ID
-	    //
-	    if (CompressionId != 8 && CompressionId != 16) {
-	      return EFI_VOLUME_CORRUPTED;
-	    }
-	    C = FileName;
-	    for (Index = 1; Index < PathCompLength; Index++) {
-	      if (CompressionId == 16) {
-		*C = *(UINT8 *)(
-                           (UINT8 *)PathComp->ComponentIdentifier +
-			   Index
-                           ) << 8;
-		Index++;
-	      } else {
-		*C = 0;
-	      }
-	      if (Index < Length) {
-		*C |= *(UINT8 *)(
-                            (UINT8 *)PathComp->ComponentIdentifier +
-			    Index
-                            );
-	      }
-
-	      C++;
-	    }
-	    *C = L'\0';
-	    break;
-	}
-
-	Status = InternalFindFile (
-                               BlockIo,
-			       DiskIo,
-			       Volume,
-			       FileName,
-			       &PreviousFile,
-			       NULL,
-			       File
-                               );
-	if (EFI_ERROR (Status)) {
-	  goto ErrorFindFile;
-	}
-
-	Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
-	if (Data >= EndData) {
-	  break;
-	}
-	if (CompareMem (
-	      (VOID *)&PreviousFile,
-	      (VOID *)Parent,
-	      sizeof (UDF_FILE_INFO)
-	      )
-	  ) {
-	  FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
-	  FreePool (PreviousFile.FileEntry);
-	}
-	CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
-      }
-      Status = EFI_SUCCESS;
-      break;
-    case LONG_ADS_SEQUENCE:
-      Status = EFI_UNSUPPORTED;
-      break;
-    case SHORT_ADS_SEQUENCE:
-      Status = EFI_UNSUPPORTED;
-      break;
+  ReadFileInfo.Flags = READ_FILE_ALLOCATE_AND_READ;
+  Status = ReadFile (
+                 BlockIo,
+		 DiskIo,
+		 Volume,
+		 &Parent->FileIdentifierDesc->Icb,
+		 FileEntryData,
+		 &ReadFileInfo
+                 );
+  if (EFI_ERROR (Status)) {
+    return Status;
   }
-  return Status;
+
+  Data = (UINT8 *)ReadFileInfo.FileData;
+  Length = ReadFileInfo.ReadLength;
+  EndData = (UINT8 *)(Data + Length);
+  CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
+  for (;;) {
+    PathComp = (UDF_PATH_COMPONENT *)Data;
+    PathCompLength = PathComp->LengthOfComponentIdentifier;
+    switch (PathComp->ComponentType) {
+      case 3:
+	FileName[0] = L'.';
+	FileName[1] = L'.';
+	FileName[2] = L'\0';
+	break;
+      case 5:
+	CompressionId = PathComp->ComponentIdentifier[0];
+	//
+	// Check for valid compression ID
+	//
+	if (CompressionId != 8 && CompressionId != 16) {
+	  return EFI_VOLUME_CORRUPTED;
+	}
+	C = FileName;
+	for (Index = 1; Index < PathCompLength; Index++) {
+	  if (CompressionId == 16) {
+	    *C = *(UINT8 *)((UINT8 *)PathComp->ComponentIdentifier +
+			    Index) << 8;
+	    Index++;
+	  } else {
+	    *C = 0;
+	  }
+	  if (Index < Length) {
+	    *C |= *(UINT8 *)((UINT8 *)PathComp->ComponentIdentifier + Index);
+	  }
+	  C++;
+	}
+	*C = L'\0';
+	break;
+    }
+
+    Status = InternalFindFile (
+                           BlockIo,
+			   DiskIo,
+			   Volume,
+			   FileName,
+			   &PreviousFile,
+			   NULL,
+			   File
+                           );
+    if (EFI_ERROR (Status)) {
+      goto ErrorFindFile;
+    }
+
+    Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
+    if (Data >= EndData) {
+      break;
+    }
+    if (CompareMem (
+	  (VOID *)&PreviousFile,
+	  (VOID *)Parent,
+	  sizeof (UDF_FILE_INFO)
+	  )
+      ) {
+      FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
+      FreePool (PreviousFile.FileEntry);
+    }
+    CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
+  }
+  FreePool (ReadFileInfo.FileData);
+  return EFI_SUCCESS;
 
 ErrorFindFile:
   if (CompareMem (
@@ -522,6 +517,7 @@ ErrorFindFile:
     FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
     FreePool (PreviousFile.FileEntry);
   }
+  FreePool (ReadFileInfo.FileData);
   return Status;
 }
 
@@ -727,6 +723,7 @@ InternalFindFile (
 	break;
       }
     }
+
 SkipFid:
     FreePool ((VOID *)FileIdentifierDesc);
   }
