@@ -149,6 +149,21 @@ enum {
   STANDARD_IDENTIFIERS_NO,
 };
 
+typedef enum {
+  READ_FILE_GET_FILESIZE,
+  READ_FILE_ALLOCATE_AND_READ,
+  READ_FILE_SEEK_AND_READ,
+} UDF_READ_FILE_FLAGS;
+
+typedef struct {
+  VOID                  *FileData;
+  UDF_READ_FILE_FLAGS   Flags;
+  UINT64                FileDataSize;
+  UINT64                FilePosition;
+  UINT64                FileSize;
+  UINT64                ReadLength;
+} UDF_READ_FILE_INFO;
+
 #pragma pack(1)
 
 //
@@ -768,7 +783,7 @@ ReadFileData (
   IN UDF_VOLUME_INFO                         *Volume,
   IN UDF_FILE_INFO                           *File,
   IN UINT64                                  FileSize,
-  IN OUT UINT64                              *CurrentFilePosition,
+  IN OUT UINT64                              *FilePosition,
   IN OUT VOID                                *Buffer,
   IN OUT UINT64                              *BufferSize
   );
@@ -780,9 +795,7 @@ ReadFile (
   IN UDF_VOLUME_INFO                         *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
   IN VOID                                    *FileEntryData,
-  IN BOOLEAN                                 ReadFileData,
-  OUT VOID                                   **FileData,
-  OUT UINT64                                 *ReadLength
+  IN OUT UDF_READ_FILE_INFO                  *ReadFileInfo
   );
 
 EFI_STATUS
