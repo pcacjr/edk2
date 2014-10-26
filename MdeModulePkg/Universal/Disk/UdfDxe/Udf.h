@@ -432,9 +432,8 @@ typedef struct {
 } UDF_FILE_INFO;
 
 typedef struct {
-  UINT64                     AedAdsOffset;
-  UINT64                     AedAdsLength;
-  UINT64                     AdOffset;
+  VOID                       *DirectoryData;
+  UINT64                     DirectoryLength;
   UINT64                     FidOffset;
 } UDF_READ_DIRECTORY_INFO;
 
@@ -775,6 +774,18 @@ ReadFileData (
   );
 
 EFI_STATUS
+ReadFile (
+  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
+  IN UDF_VOLUME_INFO                         *Volume,
+  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
+  IN VOID                                    *FileEntryData,
+  IN BOOLEAN                                 ReadFileData,
+  OUT VOID                                   **FileData,
+  OUT UINT64                                 *ReadLength
+  );
+
+EFI_STATUS
 ReadDirectoryEntry (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
   IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
@@ -881,7 +892,7 @@ GetAedAdsData (
   IN EFI_DISK_IO_PROTOCOL             *DiskIo,
   IN UDF_VOLUME_INFO                  *Volume,
   IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd,
-  OUT UINT64                          *Offset,
+  OUT VOID                            **Data,
   OUT UINT64                          *Length
   );
 
