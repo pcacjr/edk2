@@ -1,5 +1,5 @@
 /** @file
-  UDF filesystem driver.
+  UDF/ECMA-167 filesystem driver.
 
 Copyright (c) 2014 Paulo Alcantara <pcacjr@zytor.com><BR>
 This program and the accompanying materials
@@ -80,7 +80,6 @@ StartMainVolumeDescriptorSequence (
                                        ExtentAd->ExtentLength,
 				       BlockSize
                                        );
-
   Volume->LogicalVolDescs =
     (UDF_LOGICAL_VOLUME_DESCRIPTOR **)AllocateZeroPool (ExtentAd->ExtentLength);
   if (!Volume->LogicalVolDescs) {
@@ -118,7 +117,6 @@ StartMainVolumeDescriptorSequence (
     if (IS_TD (Buffer)) {
       break;
     }
-
     if (IS_LVD (Buffer)) {
       LogicalVolDesc =
 	(UDF_LOGICAL_VOLUME_DESCRIPTOR *)
@@ -127,7 +125,6 @@ StartMainVolumeDescriptorSequence (
 	Status = EFI_OUT_OF_RESOURCES;
 	goto ErrorAllocLvd;
       }
-
       CopyMem (
 	(VOID *)LogicalVolDesc,
 	Buffer,
@@ -143,7 +140,6 @@ StartMainVolumeDescriptorSequence (
 	Status = EFI_OUT_OF_RESOURCES;
 	goto ErrorAllocPd;
       }
-
       CopyMem (
 	(VOID *)PartitionDesc,
 	Buffer,
@@ -152,10 +148,8 @@ StartMainVolumeDescriptorSequence (
       Volume->PartitionDescs[Volume->PartitionDescsNo] = PartitionDesc;
       Volume->PartitionDescsNo++;
     }
-
     StartingLsn++;
   }
-
   FreePool (Buffer);
   return Status;
 
@@ -164,11 +158,9 @@ ErrorAllocLvd:
   for (Index = 0; Index < Volume->PartitionDescsNo; Index++) {
     FreePool ((VOID *)Volume->PartitionDescs[Index]);
   }
-
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     FreePool ((VOID *)Volume->LogicalVolDescs[Index]);
   }
-
 ErrorReadDiskBlk:
   FreePool (Buffer);
 ErrorAllocBuf:
@@ -198,7 +190,6 @@ GetPdFromLongAd (
       return PartitionDesc;
     }
   }
-
   return NULL;
 }
 
@@ -314,7 +305,6 @@ ErrorFindFsd:
   for (Index = 0; Index < Count; Index++) {
     FreePool ((VOID *)Volume->FileSetDescs[Index]);
   }
-
   FreePool ((VOID *)Volume->FileSetDescs);
 ErrorAllocFsd:
   return Status;
@@ -1155,7 +1145,7 @@ ReadFile (
       Length = ReadFileInfo->FileSize - ReadFileInfo->FilePosition;
       if (ReadFileInfo->FileDataSize > Length) {
 	//
-	// Reading is going beyond the EOF. Truncate it.
+	// About to read beyond the EOF -- truncate it
 	//
 	ReadFileInfo->FileDataSize = Length;
       }
@@ -1408,31 +1398,27 @@ ReadDirectoryEntry (
   UDF_READ_FILE_INFO                         ReadFileInfo;
   UDF_FILE_IDENTIFIER_DESCRIPTOR             *FileIdentifierDesc;
 
-  if (ReadDirInfo->DirectoryData) {
-    goto AlreadyRead;
+  if (!ReadDirInfo->DirectoryData) {
+    ReadFileInfo.Flags = READ_FILE_ALLOCATE_AND_READ;
+    Status = ReadFile (
+                   BlockIo,
+		   DiskIo,
+		   Volume,
+		   ParentIcb,
+		   FileEntryData,
+		   &ReadFileInfo
+                   );
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+    ReadDirInfo->DirectoryData = ReadFileInfo.FileData;
+    ReadDirInfo->DirectoryLength = ReadFileInfo.ReadLength;
   }
 
-  ReadFileInfo.Flags = READ_FILE_ALLOCATE_AND_READ;
-  Status = ReadFile (
-                 BlockIo,
-		 DiskIo,
-		 Volume,
-		 ParentIcb,
-		 FileEntryData,
-		 &ReadFileInfo
-                 );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-  ReadDirInfo->DirectoryData = ReadFileInfo.FileData;
-  ReadDirInfo->DirectoryLength = ReadFileInfo.ReadLength;
-
-AlreadyRead:
   do {
     if (ReadDirInfo->FidOffset >= ReadDirInfo->DirectoryLength) {
       return EFI_DEVICE_ERROR;
     }
-
     FileIdentifierDesc = GET_FID_FROM_ADS (
                                      ReadDirInfo->DirectoryData,
 				     ReadDirInfo->FidOffset
@@ -1572,6 +1558,96 @@ SetFileInfo (
   }
 
   *BufferSize = FileInfoLength;
+  return EFI_SUCCESS;
+}
+
+EFI_STATUS
+GetVolumeSize (
+  IN  EFI_BLOCK_IO_PROTOCOL      *BlockIo,
+  IN  EFI_DISK_IO_PROTOCOL       *DiskIo,
+  IN  UDF_VOLUME_INFO            *Volume,
+  OUT UINT64                     *VolumeSize,
+  OUT UINT64                     *FreeSpaceSize
+  )
+{
+  UINT32                         BlockSize;
+  UDF_EXTENT_AD                  ExtentAd;
+  EFI_STATUS                     Status;
+  UDF_LOGICAL_VOLUME_INTEGRITY   *LogicalVolInt;
+  UINTN                          Index;
+  UINTN                          Length;
+  UINT32                         LsnsNo;
+
+  BlockSize = BlockIo->Media->BlockSize;
+  *VolumeSize = 0;
+  *FreeSpaceSize = 0;
+  for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
+    CopyMem (
+      (VOID *)&ExtentAd,
+      (VOID *)&Volume->LogicalVolDescs[Index]->IntegritySequenceExtent,
+      sizeof (UDF_EXTENT_AD)
+      );
+    if (!ExtentAd.ExtentLength) {
+      continue;
+    }
+ReadNextSequence:
+    LogicalVolInt = (UDF_LOGICAL_VOLUME_INTEGRITY *)AllocatePool (
+                                                          ExtentAd.ExtentLength
+                                                          );
+    if (!LogicalVolInt) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+    Status = DiskIo->ReadDisk (
+                         DiskIo,
+			 BlockIo->Media->MediaId,
+			 MultU64x32 (ExtentAd.ExtentLocation, BlockSize),
+			 ExtentAd.ExtentLength,
+			 (VOID *)LogicalVolInt
+                         );
+    if (EFI_ERROR (Status)) {
+      FreePool ((VOID *)LogicalVolInt);
+      return Status;
+    }
+    ASSERT (IS_LVID (LogicalVolInt));
+    if (!IS_LVID (LogicalVolInt)) {
+      FreePool ((VOID *)LogicalVolInt);
+      return EFI_VOLUME_CORRUPTED;
+    }
+
+    Length = LogicalVolInt->NumberOfPartitions;
+    for (Index = 0; Index < Length; Index += sizeof (UINT32)) {
+      LsnsNo = *(UINT32 *)((UINT8 *)&LogicalVolInt->Data[0] + Index);
+      if (LsnsNo == 0xFFFFFFFFUL) {
+	//
+	// Size is not specified
+	//
+	continue;
+      }
+      *FreeSpaceSize += MultU64x32 ((UINT64)LsnsNo, BlockSize);
+    }
+
+    Length = LogicalVolInt->NumberOfPartitions * sizeof (UINT32) * 2;
+    for (; Index < Length; Index += sizeof (UINT32)) {
+      LsnsNo = *(UINT32 *)((UINT8 *)&LogicalVolInt->Data[0] + Index);
+      if (LsnsNo == 0xFFFFFFFFUL) {
+	//
+	// Size is not specified
+	//
+	continue;
+      }
+      *VolumeSize += MultU64x32 ((UINT64)LsnsNo, BlockSize);
+    }
+    CopyMem (
+      (VOID *)&ExtentAd,
+      (VOID *)&LogicalVolInt->NextIntegrityExtent,
+      sizeof (UDF_EXTENT_AD)
+      );
+    if (ExtentAd.ExtentLength) {
+      FreePool ((VOID *)LogicalVolInt);
+      goto ReadNextSequence;
+    }
+    FreePool ((VOID *)LogicalVolInt);
+  }
   return EFI_SUCCESS;
 }
 
