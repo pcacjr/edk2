@@ -1,5 +1,5 @@
 /** @file
-  UDF filesystem driver.
+  UDF/ECMA-167 filesystem driver.
 
 Copyright (c) 2014 Paulo Alcantara <pcacjr@zytor.com><BR>
 This program and the accompanying materials
@@ -68,6 +68,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 257))
 #define IS_AED(_Pointer) \
   ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 258))
+#define IS_LVID(_Pointer) \
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 9))
 
 #define _GET_FILETYPE(_Pointer) \
   (IS_FE (_Pointer) ? \
@@ -301,6 +303,17 @@ typedef struct {
   UDF_EXTENT_AD                    IntegritySequenceExtent;
   UINT8                            PartitionMaps[6];
 } UDF_LOGICAL_VOLUME_DESCRIPTOR;
+
+typedef struct {
+  UDF_DESCRIPTOR_TAG              DescriptorTag;
+  UDF_TIMESTAMP                   RecordingDateTime;
+  UINT32                          IntegrityType;
+  UDF_EXTENT_AD                   NextIntegrityExtent;
+  UINT8                           LogicalVolumeContentsUse[32];
+  UINT32                          NumberOfPartitions;
+  UINT32                          LengthOfImplementationUse;
+  UINT8                           Data[0];
+} UDF_LOGICAL_VOLUME_INTEGRITY;
 
 //
 // ECMA 167 4/14.1
@@ -757,6 +770,19 @@ UdfFlush (
   IN EFI_FILE_PROTOCOL  *This
   );
 
+VOID
+DuplicateFid (
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR    *FileIdentifierDesc,
+  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR   **NewFileIdentifierDesc
+  );
+
+VOID
+DuplicateFe (
+  IN EFI_BLOCK_IO_PROTOCOL   *BlockIo,
+  IN VOID                    *FileEntry,
+  OUT VOID                   **NewFileEntry
+  );
+
 EFI_STATUS
 FindRootDirectory (
   IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
@@ -816,6 +842,15 @@ SetFileInfo (
   IN CHAR16                           *FileName,
   IN OUT UINTN                        *BufferSize,
   OUT VOID                            *Buffer
+  );
+
+EFI_STATUS
+GetVolumeSize (
+  IN  EFI_BLOCK_IO_PROTOCOL      *BlockIo,
+  IN  EFI_DISK_IO_PROTOCOL       *DiskIo,
+  IN  UDF_VOLUME_INFO            *Volume,
+  OUT UINT64                     *VolumeSize,
+  OUT UINT64                     *FreeSpaceSize
   );
 
 EFI_STATUS

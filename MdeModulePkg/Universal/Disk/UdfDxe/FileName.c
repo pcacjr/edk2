@@ -1,5 +1,5 @@
 /** @file
-  UDF filesystem driver.
+  UDF/ECMA-167 filesystem driver.
 
 Copyright (c) 2014 Paulo Alcantara <pcacjr@zytor.com><BR>
 This program and the accompanying materials
