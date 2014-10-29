@@ -46,13 +46,14 @@
   Mbr.c
   Gpt.c
   ElTorito.c
+  Udf.c
   Partition.c
   Partition.h
 
 
 [Packages]
   MdePkg/MdePkg.dec
-
+  MdeModulePkg/MdeModulePkg.dec
 
 [LibraryClasses]
   DevicePathLib
@@ -63,6 +64,7 @@
   BaseLib
   UefiDriverEntryPoint
   DebugLib
+  PcdLib
 
 
 [Guids]
@@ -84,6 +86,11 @@
   gEfiDevicePathProtocolGuid
   gEfiDiskIoProtocolGuid                        ## TO_START
   gEfiDiskIo2ProtocolGuid                       ## TO_START
+
+
+[FeaturePcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdUdfFileSystemSupport  ## CONSUMES
+
 
 [UserExtensions.TianoCore."ExtraFiles"]
   PartitionDxeExtra.uni
