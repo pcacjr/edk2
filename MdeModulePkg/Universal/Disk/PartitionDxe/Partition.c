@@ -45,6 +45,7 @@ PARTITION_DETECT_ROUTINE mPartitionDetectRoutineTable[] = {
   PartitionInstallGptChildHandles,
   PartitionInstallElToritoChildHandles,
   PartitionInstallMbrChildHandles,
+  PartitionInstallUdfChildHandles,
   NULL
 };
 

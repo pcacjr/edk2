@@ -38,6 +38,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include <IndustryStandard/Mbr.h>
 #include <IndustryStandard/ElTorito.h>
+#include <IndustryStandard/Udf.h>
 
 
 //
@@ -419,6 +420,34 @@ PartitionInstallElToritoChildHandles (
 **/
 EFI_STATUS
 PartitionInstallMbrChildHandles (
+  IN  EFI_DRIVER_BINDING_PROTOCOL  *This,
+  IN  EFI_HANDLE                   Handle,
+  IN  EFI_DISK_IO_PROTOCOL         *DiskIo,
+  IN  EFI_DISK_IO2_PROTOCOL        *DiskIo2,
+  IN  EFI_BLOCK_IO_PROTOCOL        *BlockIo,
+  IN  EFI_BLOCK_IO2_PROTOCOL       *BlockIo2,
+  IN  EFI_DEVICE_PATH_PROTOCOL     *DevicePath
+  );
+
+/**
+  Install child handles if the Handle supports UDF/ECMA-167 volume format.
+
+  @param[in]  This        Calling context.
+  @param[in]  Handle      Parent Handle.
+  @param[in]  DiskIo      Parent DiskIo interface.
+  @param[in]  DiskIo2     Parent DiskIo2 interface.
+  @param[in]  BlockIo     Parent BlockIo interface.
+  @param[in]  BlockIo2    Parent BlockIo2 interface.
+  @param[in]  DevicePath  Parent Device Path
+
+
+  @retval EFI_SUCCESS         Child handle(s) was added.
+  @retval EFI_MEDIA_CHANGED   Media changed Detected.
+  @retval other               no child handle was added.
+
+**/
+EFI_STATUS
+PartitionInstallUdfChildHandles (
   IN  EFI_DRIVER_BINDING_PROTOCOL  *This,
   IN  EFI_HANDLE                   Handle,
   IN  EFI_DISK_IO_PROTOCOL         *DiskIo,
