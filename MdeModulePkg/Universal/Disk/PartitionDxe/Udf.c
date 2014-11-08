@@ -315,10 +315,11 @@ PartitionInstallUdfChildHandles (
 				    0,
 				    BlockIo->Media->LastBlock,
 				    BlockIo->Media->BlockSize,
-				    TRUE
+				    FALSE
                                     );
   if (!EFI_ERROR (Status)) {
     Status = EFI_NOT_FOUND;
   }
+
   return Status;
 }
