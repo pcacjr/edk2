@@ -41,9 +41,10 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 // As specified in ECMA-167 specification, the logical sector size shall be
 // 2048 bytes.
 //
-#define LOGICAL_SECTOR_SIZE                   ((UINT64)0x0000000000000800ULL)
-#define FIRST_ANCHOR_POINT_LSN                ((UINT64)0x0000000000000100ULL)
-#define BEA_DESCRIPTOR_LSN_OFFSET             ((UINT64)0x0000000000008000ULL)
+#define UDF_LOGICAL_SECTOR_SHIFT        11
+#define UDF_VRS_START_OFFSET            ((UINT64) (16 << UDF_LOGICAL_SECTOR_SHIFT))
+#define UDF_STANDARD_IDENTIFIER_LENGTH  5
+#define UDF_CDROM_VOLUME_IDENTIFIER     "CD001"
 
 #define _GET_TAG_ID(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier)
@@ -145,8 +146,7 @@ typedef struct {
 
 enum {
   BEA_IDENTIFIER,
-  VSD_IDENTIFIER_0,
-  VSD_IDENTIFIER_1,
+  VSD_IDENTIFIER,
   TEA_IDENTIFIER,
   STANDARD_IDENTIFIERS_NO,
 };
@@ -253,12 +253,12 @@ typedef struct {
 // ECMA 167 3/9.1
 //
 typedef struct {
-  UINT8                 StructureType;
-  UINT8                 StandardIdentifier[5];
-  UINT8                 StructureVersion;
-  UINT8                 Reserved;
-  UINT8                 StructureData[2040];
-} UDF_NSR_DESCRIPTOR;
+  UINT8   StructureType;
+  UINT8   StandardIdentifier[UDF_STANDARD_IDENTIFIER_LENGTH];
+  UINT8   StructureVersion;
+  UINT8   Reserved;
+  UINT8   StructureData[2040];
+} UDF_VOLUME_DESCRIPTOR;
 
 typedef struct {
   UDF_DESCRIPTOR_TAG                      DescriptorTag;
@@ -510,17 +510,6 @@ typedef struct {
   EFI_DEVICE_PATH_PROTOCOL          *DevicePath;
   EFI_HANDLE                        Handle;
 } PRIVATE_UDF_SIMPLE_FS_DATA;
-
-typedef struct {
-  VENDOR_DEVICE_PATH         DevicePath;
-  EFI_DEVICE_PATH_PROTOCOL   End;
-} UDF_DEVICE_PATH;
-
-// C5BD4D42-1A76-4996-8956-73CDA326CD0A
-#define EFI_UDF_DEVICE_PATH_GUID \
-  { 0xC5BD4D42, 0x1A76, 0x4996, \
-    { 0x89, 0x56, 0x73, 0xCD, 0xA3, 0x26, 0xCD, 0x0A } \
-  }
 
 //
 // Global Variables
@@ -854,10 +843,9 @@ GetVolumeSize (
   );
 
 EFI_STATUS
-IsSupportedUdfVolume (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  OUT BOOLEAN                                *Supported
+SupportUdfFileSystem (
+  IN  EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN  EFI_DISK_IO_PROTOCOL   *DiskIo
   );
 
 EFI_STATUS
