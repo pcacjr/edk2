@@ -53,27 +53,29 @@ UDF_DEVICE_PATH gUdfDevicePath = {
 
 EFI_STATUS
 FindAnchorVolumeDescriptorPointer (
-  IN  EFI_BLOCK_IO_PROTOCOL                  *BlockIo,
-  IN  EFI_DISK_IO_PROTOCOL                   *DiskIo,
-  OUT UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER   *AnchorPoint
+  IN   EFI_BLOCK_IO_PROTOCOL                 *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL                  *DiskIo,
+  OUT  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  *AnchorPoint
   )
 {
-  EFI_STATUS   Status;
-  UINT32       BlockSize;
-  EFI_LBA      EndLBA;
+  EFI_STATUS  Status;
+  UINT32      BlockSize;
+  EFI_LBA     EndLBA;
 
   BlockSize = BlockIo->Media->BlockSize;
   EndLBA = BlockIo->Media->LastBlock;
+
   Status = DiskIo->ReadDisk (
-                       DiskIo,
-                       BlockIo->Media->MediaId,
-		       MultU64x32 (0x100ULL, BlockSize),
-                       sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
-                       (VOID *) AnchorPoint
-                       );
+                         DiskIo,
+                         BlockIo->Media->MediaId,
+		         MultU64x32 (0x100ULL, BlockSize),
+                         sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
+                         (VOID *) AnchorPoint
+                         );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
+
   Status = EFI_VOLUME_CORRUPTED;
   if (IS_AVDP (AnchorPoint)) {
     Status = EFI_SUCCESS;
@@ -81,30 +83,32 @@ FindAnchorVolumeDescriptorPointer (
   }
 
   Status = DiskIo->ReadDisk (
-                       DiskIo,
-                       BlockIo->Media->MediaId,
-		       MultU64x32 (EndLBA - 0x100ULL, BlockSize),
-                       sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
-                       (VOID *) AnchorPoint
-                       );
+                         DiskIo,
+                         BlockIo->Media->MediaId,
+		         MultU64x32 (EndLBA - 0x100ULL, BlockSize),
+                         sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
+                         (VOID *) AnchorPoint
+                         );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
+
   if (IS_AVDP (AnchorPoint)) {
     Status = EFI_SUCCESS;
     goto Exit;
   }
 
   Status = DiskIo->ReadDisk (
-                       DiskIo,
-                       BlockIo->Media->MediaId,
-		       MultU64x32 (EndLBA, BlockSize),
-                       sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
-                       (VOID *) AnchorPoint
-                       );
+                         DiskIo,
+                         BlockIo->Media->MediaId,
+		         MultU64x32 (EndLBA, BlockSize),
+                         sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
+                         (VOID *) AnchorPoint
+                         );
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
+
   if (IS_AVDP (AnchorPoint)) {
     Status = EFI_SUCCESS;
   }
@@ -152,6 +156,7 @@ SupportUdfFileSystem (
       ) {
       break;
     }
+
     if (CompareMem (
 	  (VOID *) &VolDescriptor.StandardIdentifier,
 	  (VOID *) UDF_CDROM_VOLUME_IDENTIFIER,
@@ -175,6 +180,7 @@ SupportUdfFileSystem (
     Status = EFI_UNSUPPORTED;
     goto Exit;
   }
+
   Status = DiskIo->ReadDisk (
                        DiskIo,
                        BlockIo->Media->MediaId,
@@ -185,6 +191,7 @@ SupportUdfFileSystem (
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
+
   if (CompareMem (
 	(VOID *) &VolDescriptor.StandardIdentifier,
 	(VOID *) &gUdfStandardIdentifiers[VSD_IDENTIFIER_0],
@@ -208,6 +215,7 @@ SupportUdfFileSystem (
     Status = EFI_UNSUPPORTED;
     goto Exit;
   }
+
   Status = DiskIo->ReadDisk (
                        DiskIo,
                        BlockIo->Media->MediaId,
@@ -218,6 +226,7 @@ SupportUdfFileSystem (
   if (EFI_ERROR (Status)) {
     goto Exit;
   }
+
   if (CompareMem (
 	(VOID *) &VolDescriptor.StandardIdentifier,
 	(VOID *) &gUdfStandardIdentifiers[TEA_IDENTIFIER],
@@ -306,7 +315,7 @@ PartitionInstallUdfChildHandles (
 				    0,
 				    BlockIo->Media->LastBlock,
 				    BlockIo->Media->BlockSize,
-				    FALSE
+				    TRUE
                                     );
   if (!EFI_ERROR (Status)) {
     Status = EFI_NOT_FOUND;

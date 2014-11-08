@@ -330,7 +330,7 @@ UdfRead (
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
-  if (!This || !Buffer) {
+  if (!This || !BufferSize || (*BufferSize && !Buffer)) {
     Status = EFI_INVALID_PARAMETER;
     goto ErrorInvalidParams;
   }
@@ -369,7 +369,6 @@ UdfRead (
 		       Buffer,
 		       BufferSize
                        );
-    Status = EFI_SUCCESS;
   } else if (IS_FID_DIRECTORY_FILE (File->FileIdentifierDesc)) {
     if (!ReadDirInfo->FidOffset && PrivFileData->FilePosition) {
       Status = EFI_DEVICE_ERROR;
@@ -531,10 +530,13 @@ UdfClose (
   if (PrivFileData->File.FileIdentifierDesc) {
     FreePool ((VOID *)PrivFileData->File.FileIdentifierDesc);
   }
+
   if (PrivFileData->ReadDirInfo.DirectoryData) {
     FreePool (PrivFileData->ReadDirInfo.DirectoryData);
   }
+
   FreePool ((VOID *)PrivFileData);
+
 Exit:
   gBS->RestoreTPL (OldTpl);
   return Status;
@@ -734,7 +736,7 @@ UdfGetInfo (
   UINT64                                 FreeSpaceSize;
   CHAR16                                 VolumeLabel[64];
 
-  if (!This || !InformationType || !BufferSize || !Buffer) {
+  if (!This || !InformationType || !BufferSize || (*BufferSize && !Buffer)) {
     return EFI_INVALID_PARAMETER;
   }
 
@@ -811,6 +813,7 @@ UdfGetInfo (
   } else {
     Status = EFI_UNSUPPORTED;
   }
+
 Exit:
   return Status;
 }
