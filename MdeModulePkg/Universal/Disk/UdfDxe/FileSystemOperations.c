@@ -515,6 +515,16 @@ ResolveSymlink (
 
 	*C = L'\0';
 	break;
+      case 4:
+	DuplicateFe (BlockIo, PreviousFile.FileEntry, &File->FileEntry);
+	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
+	goto NextPathComponent;
+      default:
+	Print (
+	  L"Warning: unhandled Path Component Type %d\n",
+	  PathComp->ComponentType
+	  );
+	goto NextPathComponent;
     }
 
     Status = InternalFindFile (
@@ -530,6 +540,7 @@ ResolveSymlink (
       goto ErrorFindFile;
     }
 
+NextPathComponent:
     Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
     if (Data >= EndData) {
       break;
