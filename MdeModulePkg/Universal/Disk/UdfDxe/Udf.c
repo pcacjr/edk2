@@ -26,14 +26,26 @@ EFI_DRIVER_BINDING_PROTOCOL gUdfDriverBinding = {
   NULL
 };
 
-UDF_DEVICE_PATH gUdfDriverDevicePath = {
-  {
-    { MEDIA_DEVICE_PATH, MEDIA_VENDOR_DP, { sizeof (VENDOR_DEVICE_PATH), 0 } },
+typedef struct {
+  VENDOR_DEVICE_PATH        DevicePath;
+  EFI_DEVICE_PATH_PROTOCOL  End;
+} UDF_DEVICE_PATH;
+
+//
+// C5BD4D42-1A76-4996-8956-73CDA326CD0A
+//
+#define EFI_UDF_DEVICE_PATH_GUID \
+  { 0xC5BD4D42, 0x1A76, 0x4996, \
+    { 0x89, 0x56, 0x73, 0xCD, 0xA3, 0x26, 0xCD, 0x0A } \
+  }
+
+UDF_DEVICE_PATH gUdfDevicePath = {
+  { { MEDIA_DEVICE_PATH, MEDIA_VENDOR_DP,
+      { sizeof (VENDOR_DEVICE_PATH), 0 } },
     EFI_UDF_DEVICE_PATH_GUID
   },
-  { END_DEVICE_PATH_TYPE, END_ENTIRE_DEVICE_PATH_SUBTYPE, {
-                              sizeof (EFI_DEVICE_PATH_PROTOCOL), 0
-                              }
+  { END_DEVICE_PATH_TYPE, END_ENTIRE_DEVICE_PATH_SUBTYPE,
+    { sizeof (EFI_DEVICE_PATH_PROTOCOL), 0 }
   }
 };
 
@@ -60,8 +72,10 @@ UdfDriverBindingSupported (
   IN EFI_DEVICE_PATH_PROTOCOL     *RemainingDevicePath
   )
 {
-  EFI_STATUS                      Status;
-  EFI_DISK_IO_PROTOCOL            *DiskIo;
+  EFI_STATUS                       Status;
+  EFI_DISK_IO_PROTOCOL             *DiskIo;
+  EFI_BLOCK_IO_PROTOCOL            *BlockIo;
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *SimpleFs;
 
   Status = gBS->OpenProtocol (
                   ControllerHandle,
@@ -69,34 +83,69 @@ UdfDriverBindingSupported (
                   (VOID **)&DiskIo,
                   This->DriverBindingHandle,
                   ControllerHandle,
-                  EFI_OPEN_PROTOCOL_BY_DRIVER
+                  EFI_OPEN_PROTOCOL_GET_PROTOCOL
                   );
-  if (Status == EFI_ALREADY_STARTED) {
-    Status = EFI_SUCCESS;
-    goto Exit;
-  }
-
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
-
-  gBS->CloseProtocol (
-         ControllerHandle,
-         &gEfiDiskIoProtocolGuid,
-         This->DriverBindingHandle,
-         ControllerHandle
-         );
 
   Status = gBS->OpenProtocol (
                   ControllerHandle,
                   &gEfiBlockIoProtocolGuid,
-                  NULL,
+                  (VOID **)&BlockIo,
                   This->DriverBindingHandle,
                   ControllerHandle,
-                  EFI_OPEN_PROTOCOL_TEST_PROTOCOL
+                  EFI_OPEN_PROTOCOL_GET_PROTOCOL
                   );
+  if (EFI_ERROR (Status)) {
+    goto Error_Open_BlockIo;
+  }
 
-Exit:
+  //
+  // Check if media contains a valid UDF volume
+  //
+  Status = SupportUdfFileSystem (BlockIo, DiskIo);
+  if (EFI_ERROR (Status)) {
+    goto Error_No_Udf_FileSystem;
+  }
+
+  Status = gBS->OpenProtocol (
+                  ControllerHandle,
+                  &gEfiSimpleFileSystemProtocolGuid,
+                  (VOID **)&SimpleFs,
+                  This->DriverBindingHandle,
+                  ControllerHandle,
+                  EFI_OPEN_PROTOCOL_GET_PROTOCOL
+                  );
+  if (!EFI_ERROR (Status)) {
+    gBS->CloseProtocol (
+           ControllerHandle,
+           &gEfiSimpleFileSystemProtocolGuid,
+           This->DriverBindingHandle,
+           ControllerHandle
+           );
+    Status = EFI_ALREADY_STARTED;
+  } else {
+    Status = EFI_SUCCESS;
+  }
+
+  if (EFI_ERROR (Status)) {
+Error_No_Udf_FileSystem:
+Error_Open_BlockIo:
+    gBS->CloseProtocol (
+           ControllerHandle,
+           &gEfiDiskIoProtocolGuid,
+           This->DriverBindingHandle,
+           ControllerHandle
+           );
+    gBS->CloseProtocol (
+           ControllerHandle,
+           &gEfiBlockIoProtocolGuid,
+           This->DriverBindingHandle,
+           ControllerHandle
+           );
+  }
+
   return Status;
 }
 
@@ -123,12 +172,11 @@ UdfDriverBindingStart (
   IN EFI_DEVICE_PATH_PROTOCOL     *RemainingDevicePath
   )
 {
-  EFI_TPL                         OldTpl;
-  EFI_STATUS                      Status;
-  EFI_BLOCK_IO_PROTOCOL           *BlockIo;
-  EFI_DISK_IO_PROTOCOL            *DiskIo;
-  BOOLEAN                         IsUdfVolume;
-  PRIVATE_UDF_SIMPLE_FS_DATA      *PrivFsData;
+  EFI_TPL                     OldTpl;
+  EFI_STATUS                  Status;
+  EFI_BLOCK_IO_PROTOCOL       *BlockIo;
+  EFI_DISK_IO_PROTOCOL        *DiskIo;
+  PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -150,26 +198,17 @@ UdfDriverBindingStart (
                   (VOID **)&DiskIo,
                   This->DriverBindingHandle,
                   ControllerHandle,
-                  EFI_OPEN_PROTOCOL_BY_DRIVER
+                  EFI_OPEN_PROTOCOL_GET_PROTOCOL
                   );
-  if (EFI_ERROR (Status) && Status == EFI_ALREADY_STARTED) {
+  if (EFI_ERROR (Status)) {
     goto Exit;
   }
 
   //
   // Check if media contains a valid UDF volume
   //
-  Status = IsSupportedUdfVolume (
-                       BlockIo,
-		       DiskIo,
-		       &IsUdfVolume
-                       );
+  Status = SupportUdfFileSystem (BlockIo, DiskIo);
   if (EFI_ERROR (Status)) {
-    goto Exit;
-  }
-
-  if (!IsUdfVolume) {
-    Status = EFI_UNSUPPORTED;
     goto Exit;
   }
 
@@ -185,15 +224,10 @@ UdfDriverBindingStart (
   PrivFsData->Signature   = PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE;
   PrivFsData->BlockIo     = BlockIo;
   PrivFsData->DiskIo      = DiskIo;
-
   PrivFsData->SimpleFs.Revision   = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
   PrivFsData->SimpleFs.OpenVolume = UdfOpenVolume;
-
-  PrivFsData->DevicePath   =
-                DuplicateDevicePath (
-		             (EFI_DEVICE_PATH_PROTOCOL *)&gUdfDriverDevicePath
-                             );
-  PrivFsData->Handle       = NULL;
+  PrivFsData->DevicePath = DuplicateDevicePath ((EFI_DEVICE_PATH_PROTOCOL *)&gUdfDevicePath);
+  PrivFsData->Handle = NULL;
 
   //
   // Install new child handle
@@ -202,9 +236,10 @@ UdfDriverBindingStart (
                                      &PrivFsData->Handle,
                                      &gEfiSimpleFileSystemProtocolGuid,
                                      &PrivFsData->SimpleFs,
-                                     &gEfiDevicePathProtocolGuid,
-                                     PrivFsData->DevicePath,
-                                     NULL
+				     &gEfiDevicePathProtocolGuid,
+				     PrivFsData->DevicePath,
+				     NULL,
+				     NULL
                                      );
   if (EFI_ERROR (Status)) {
     goto Exit;
@@ -212,7 +247,6 @@ UdfDriverBindingStart (
 
 Exit:
   gBS->RestoreTPL (OldTpl);
-
   return Status;
 }
 
@@ -244,6 +278,7 @@ UdfDriverBindingStop (
   EFI_STATUS                        Status;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL   *SimpleFs;
   EFI_DISK_IO_PROTOCOL              *DiskIo;
+  EFI_BLOCK_IO_PROTOCOL              *BlockIo;
   BOOLEAN                           Done;
 
   Status = EFI_SUCCESS;
@@ -278,14 +313,19 @@ UdfDriverBindingStop (
         This->DriverBindingHandle,
         ControllerHandle
         );
+    gBS->CloseProtocol (
+        ControllerHandle,
+        &gEfiBlockIoProtocolGuid,
+        This->DriverBindingHandle,
+        ControllerHandle
+        );
 
     Status = gBS->UninstallMultipleProtocolInterfaces (
                                         ChildHandleBuffer[Index],
-					&gEfiDevicePathProtocolGuid,
-					PrivFsData->DevicePath,
 					&gEfiSimpleFileSystemProtocolGuid,
 					&PrivFsData->SimpleFs,
-					NULL,
+					&gEfiDevicePathProtocolGuid,
+					PrivFsData->DevicePath,
 					NULL
                                         );
     if (EFI_ERROR (Status)) {
@@ -293,6 +333,14 @@ UdfDriverBindingStop (
              ControllerHandle,
              &gEfiDiskIoProtocolGuid,
              (VOID **)&DiskIo,
+             This->DriverBindingHandle,
+             ChildHandleBuffer[Index],
+             EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER
+             );
+      gBS->OpenProtocol (
+             ControllerHandle,
+             &gEfiBlockIoProtocolGuid,
+             (VOID **)&BlockIo,
              This->DriverBindingHandle,
              ChildHandleBuffer[Index],
              EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER
