@@ -33,6 +33,7 @@ FindAnchorVolumeDescriptorPointer (
 
   BlockSize = BlockIo->Media->BlockSize;
   EndLBA = BlockIo->Media->LastBlock;
+
   Status = DiskIo->ReadDisk (
                        DiskIo,
                        BlockIo->Media->MediaId,
@@ -110,6 +111,7 @@ StartMainVolumeDescriptorSequence (
                                        ExtentAd->ExtentLength,
 				       BlockSize
                                        );
+
   Volume->LogicalVolDescs =
     (UDF_LOGICAL_VOLUME_DESCRIPTOR **)AllocateZeroPool (ExtentAd->ExtentLength);
   if (!Volume->LogicalVolDescs) {
@@ -386,6 +388,7 @@ ReadVolumeFileStructure (
   //
   ASSERT (Volume->LogicalVolDescsNo == 1);
   ASSERT (Volume->PartitionDescsNo);
+
   return Status;
 }
 
@@ -578,6 +581,7 @@ FindFileEntry (
 
   Lsn = GetLongAdLsn (Volume, Icb);
   BlockSize = BlockIo->Media->BlockSize;
+
   *FileEntry = AllocateZeroPool (BlockSize);
   if (!*FileEntry) {
     return EFI_OUT_OF_RESOURCES;
@@ -1344,14 +1348,14 @@ ReadFile (
 	      Offset = 0;
 	    }
 
+	    FinishedSeeking = TRUE;
+SkipFileSeek:
 	    if (GET_EXTENT_LENGTH (LongAd) - Offset > BytesLeft) {
 	      DataLength = BytesLeft;
 	    } else {
 	      DataLength = GET_EXTENT_LENGTH (LongAd) - Offset;
 	    }
 
-	    FinishedSeeking = TRUE;
-SkipFileSeek:
 	    Status = DiskIo->ReadDisk (
                                     DiskIo,
 				    BlockIo->Media->MediaId,
@@ -1437,14 +1441,14 @@ SkipLongAd:
 	      Offset = 0;
 	    }
 
+	    FinishedSeeking = TRUE;
+SkipFileSeek2:
 	    if (ShortAd->ExtentLength - Offset > BytesLeft) {
 	      DataLength = BytesLeft;
 	    } else {
 	      DataLength = ShortAd->ExtentLength - Offset;
 	    }
 
-	    FinishedSeeking = TRUE;
-SkipFileSeek2:
 	    Status = DiskIo->ReadDisk (
                                     DiskIo,
 				    BlockIo->Media->MediaId,
