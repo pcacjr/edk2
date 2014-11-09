@@ -199,6 +199,7 @@ ErrorAllocLvd:
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     FreePool ((VOID *)Volume->LogicalVolDescs[Index]);
   }
+
 ErrorReadDiskBlk:
   FreePool (Buffer);
 ErrorAllocBuf:
@@ -383,6 +384,7 @@ ReadVolumeFileStructure (
   if (EFI_ERROR (Status)) {
     return Status;
   }
+
   //
   // TODO: handle FSDs in multiple LVDs
   //
@@ -521,7 +523,7 @@ ResolveSymlink (
 	goto NextPathComponent;
       default:
 	Print (
-	  L"Warning: unhandled Path Component Type %d\n",
+	  L"Warning: Unhandled Path Component Type %d\n",
 	  PathComp->ComponentType
 	  );
 	goto NextPathComponent;
@@ -763,6 +765,7 @@ InternalFindFile (
       if (Status == EFI_DEVICE_ERROR) {
 	Status = EFI_NOT_FOUND;
       }
+
       break;
     }
 
@@ -812,6 +815,7 @@ SkipFid:
       if (EFI_ERROR (Status)) {
 	goto ErrorFindFe;
       }
+
       if (CompareMem (
 	    (VOID *)Parent->FileEntry,
 	    (VOID *)CompareFileEntry,
@@ -911,6 +915,7 @@ FindFile (
 	return Status;
       }
     }
+
     if (CompareMem (
 	  (VOID *)&PreviousFile,
 	  (VOID *)Parent,
@@ -947,13 +952,18 @@ GetShortAdFromAds (
 
     ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)((UINT8 *)Data +
 						  *Offset);
-    if (ShortAd->ExtentLength) {
-      break;
+    switch (GET_EXTENT_FLAGS (ShortAd)) {
+      case EXTENT_NOT_RECORDED_BUT_ALLOCATED:
+      case EXTENT_NOT_RECORDED_NOT_ALLOCATED:
+	*Offset += sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
+	continue;
+      case EXTENT_IS_NEXT_EXTENT:
+      case EXTENT_RECORDED_AND_ALLOCATED:
+	goto Done;
     }
-
-    *Offset += sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
   }
 
+Done:
   *FoundShortAd = ShortAd;
   return EFI_SUCCESS;
 }
@@ -1088,25 +1098,37 @@ GetAedAdsOffset (
   IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
   IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
   IN   UDF_VOLUME_INFO                 *Volume,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *LongAd,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
+  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
+  IN   VOID                            *Ad,
   OUT  UINT64                          *Offset,
   OUT  UINT64                          *Length
   )
 {
   EFI_STATUS                        Status;
   UINT32                            ExtentLength;
-  VOID                              *Data;
   UINT64                            Lsn;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR   *ShortAd;
+  UDF_LONG_ALLOCATION_DESCRIPTOR    *LongAd;
+  VOID                              *Data;
   UINT32                            BlockSize;
   UDF_ALLOCATION_EXTENT_DESCRIPTOR  *AllocExtDesc;
 
-  ExtentLength = GET_EXTENT_LENGTH (LongAd);
+  if (RecordingFlags == SHORT_ADS_SEQUENCE) {
+    ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)Ad;
+    ExtentLength = GET_EXTENT_LENGTH (ShortAd);
+    Lsn = GetShortAdLsn (GetPdFromLongAd (Volume, ParentIcb), ShortAd);
+  } else if (RecordingFlags == LONG_ADS_SEQUENCE) {
+    LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)Ad;
+    ExtentLength = GET_EXTENT_LENGTH (LongAd);
+    Lsn = GetLongAdLsn (Volume, LongAd);
+  }
+
   Data = AllocatePool (ExtentLength);
   if (!Data) {
     return EFI_OUT_OF_RESOURCES;
   }
 
-  Lsn = GetLongAdLsn (Volume, LongAd);
   BlockSize = BlockIo->Media->BlockSize;
   Status = DiskIo->ReadDisk (
                           DiskIo,
@@ -1142,7 +1164,9 @@ GetAedAdsData (
   IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
   IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
   IN   UDF_VOLUME_INFO                 *Volume,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *LongAd,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
+  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
+  IN   VOID                            *Ad,
   OUT  VOID                            **Data,
   OUT  UINT64                          *Length
   )
@@ -1150,7 +1174,16 @@ GetAedAdsData (
   EFI_STATUS  Status;
   UINT64      Offset;
 
-  Status = GetAedAdsOffset (BlockIo, DiskIo, Volume, LongAd, &Offset, Length);
+  Status = GetAedAdsOffset (
+                        BlockIo,
+			DiskIo,
+			Volume,
+			ParentIcb,
+			RecordingFlags,
+			Ad,
+			&Offset,
+			Length
+                        );
   if (EFI_ERROR (Status)) {
     return Status;
   }
@@ -1182,7 +1215,7 @@ GrowUpBufferToNextAd (
   if (RecordingFlags == LONG_ADS_SEQUENCE) {
     ExtentLength = GET_EXTENT_LENGTH ((UDF_LONG_ALLOCATION_DESCRIPTOR *)Ad);
   } else if (RecordingFlags == SHORT_ADS_SEQUENCE) {
-    ExtentLength = ((UDF_SHORT_ALLOCATION_DESCRIPTOR *)Ad)->ExtentLength;
+    ExtentLength = GET_EXTENT_LENGTH ((UDF_SHORT_ALLOCATION_DESCRIPTOR *)Ad);
   }
 
   if (!*Buffer) {
@@ -1250,6 +1283,7 @@ ReadFile (
       DataOffset = 0;
       FilePosition = 0;
       FinishedSeeking = FALSE;
+
       break;
   }
 
@@ -1278,6 +1312,7 @@ ReadFile (
 	  ReadFileInfo->FilePosition += ReadFileInfo->FileDataSize;
 	  break;
       }
+
       break;
     case LONG_ADS_SEQUENCE:
       GetAdsInformation (FileEntryData, &Data, &Length);
@@ -1304,7 +1339,9 @@ ReadFile (
                               BlockIo,
 			      DiskIo,
 			      Volume,
-			      LongAd,
+			      ParentIcb,
+			      LONG_ADS_SEQUENCE,
+			      (VOID *)LongAd,
 			      &Data,
 			      &Length
                               );
@@ -1382,12 +1419,14 @@ SkipFileSeek:
 	    if (!BytesLeft) {
 	      return EFI_SUCCESS;
 	    }
+
 	    break;
 	}
 
 SkipLongAd:
 	AdOffset += sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR);
       }
+
       break;
     case SHORT_ADS_SEQUENCE:
       GetAdsInformation (FileEntryData, &Data, &Length);
@@ -1403,13 +1442,35 @@ SkipLongAd:
 	  return EFI_SUCCESS;
 	}
 
+	if (GET_EXTENT_FLAGS (ShortAd) == EXTENT_IS_NEXT_EXTENT) {
+	  if (!DoFreeAed) {
+	    DoFreeAed = TRUE;
+	  } else {
+	    DoFreeAed = FALSE;
+	  }
+
+	  Status = GetAedAdsData (
+                              BlockIo,
+			      DiskIo,
+			      Volume,
+			      ParentIcb,
+			      SHORT_ADS_SEQUENCE,
+			      (VOID *)ShortAd,
+			      &Data,
+			      &Length
+                              );
+	  ASSERT (!EFI_ERROR (Status));
+	  AdOffset = 0;
+	  continue;
+	}
+
 	Lsn = GetShortAdLsn (
 	               GetPdFromLongAd (Volume, ParentIcb),
 		       ShortAd
                        );
 	switch (ReadFileInfo->Flags) {
 	  case READ_FILE_GET_FILESIZE:
-	    ReadFileInfo->ReadLength += ShortAd->ExtentLength;
+	    ReadFileInfo->ReadLength += GET_EXTENT_LENGTH (ShortAd);
 	    break;
 	  case READ_FILE_ALLOCATE_AND_READ:
 	    Status = GrowUpBufferToNextAd (
@@ -1423,12 +1484,12 @@ SkipLongAd:
                                     DiskIo,
 				    BlockIo->Media->MediaId,
 				    MultU64x32 (Lsn, BlockSize),
-				    ShortAd->ExtentLength,
+				    GET_EXTENT_LENGTH (ShortAd),
 				    (VOID *)((UINT8 *)ReadFileInfo->FileData +
 					     ReadFileInfo->ReadLength)
                                   );
 	    ASSERT (!EFI_ERROR (Status));
-	    ReadFileInfo->ReadLength += ShortAd->ExtentLength;
+	    ReadFileInfo->ReadLength += GET_EXTENT_LENGTH (ShortAd);
 	    break;
 	  case READ_FILE_SEEK_AND_READ:
 	    if (FinishedSeeking) {
@@ -1437,13 +1498,13 @@ SkipLongAd:
 	    }
 
 	    if (FilePosition +
-		ShortAd->ExtentLength < ReadFileInfo->FilePosition) {
-	      FilePosition += ShortAd->ExtentLength;
+		GET_EXTENT_LENGTH (ShortAd) < ReadFileInfo->FilePosition) {
+	      FilePosition += GET_EXTENT_LENGTH (ShortAd);
 	      goto SkipShortAd;
 	    }
 
 	    if (FilePosition +
-		ShortAd->ExtentLength > ReadFileInfo->FilePosition) {
+		GET_EXTENT_LENGTH (ShortAd) > ReadFileInfo->FilePosition) {
 	      Offset = ReadFileInfo->FilePosition - FilePosition;
 	      if (Offset < 0) {
 		Offset = -(Offset);
@@ -1454,10 +1515,10 @@ SkipLongAd:
 
 	    FinishedSeeking = TRUE;
 SkipFileSeek2:
-	    if (ShortAd->ExtentLength - Offset > BytesLeft) {
+	    if (GET_EXTENT_LENGTH (ShortAd) - Offset > BytesLeft) {
 	      DataLength = BytesLeft;
 	    } else {
-	      DataLength = ShortAd->ExtentLength - Offset;
+	      DataLength = GET_EXTENT_LENGTH (ShortAd) - Offset;
 	    }
 
 	    Status = DiskIo->ReadDisk (
@@ -1475,12 +1536,14 @@ SkipFileSeek2:
 	    if (!BytesLeft) {
 	      return EFI_SUCCESS;
 	    }
+
 	    break;
 	}
 
 SkipShortAd:
 	AdOffset += sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
       }
+
       break;
   }
 
@@ -1528,6 +1591,7 @@ ReadDirectoryEntry (
     if (ReadDirInfo->FidOffset >= ReadDirInfo->DirectoryLength) {
       return EFI_DEVICE_ERROR;
     }
+
     FileIdentifierDesc = GET_FID_FROM_ADS (
                                      ReadDirInfo->DirectoryData,
 				     ReadDirInfo->FidOffset
@@ -1555,6 +1619,7 @@ SetFileInfo (
   UDF_EXTENDED_FILE_ENTRY  *ExtendedFileEntry;
 
   Status = EFI_SUCCESS;
+
   FileInfoLength =
     (sizeof (EFI_FILE_INFO) + (FileName ?
 			       ((StrLen (FileName) + 1) * sizeof (CHAR16)) :
@@ -1644,6 +1709,7 @@ SetFileInfo (
     FileInfo->LastAccessTime.Nanosecond   =
                          ExtendedFileEntry->AccessTime.HundredsOfMicroseconds;
   }
+
   //
   // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
   // structures should be interpreted as Local Time. Use
@@ -1690,8 +1756,10 @@ GetVolumeSize (
   UINT32                        LsnsNo;
 
   BlockSize = BlockIo->Media->BlockSize;
+
   *VolumeSize = 0;
   *FreeSpaceSize = 0;
+
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     CopyMem (
       (VOID *)&ExtentAd,
@@ -1784,6 +1852,7 @@ SupportUdfFileSystem (
   UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  AnchorPoint;
 
   ZeroMem ((VOID *)&TerminatingVolDescriptor, sizeof (UDF_VOLUME_DESCRIPTOR));
+
   //
   // Start Volume Recognition Sequence
   //
@@ -1825,6 +1894,7 @@ SupportUdfFileSystem (
       goto Exit;
     }
   }
+
   //
   // Look for either "NSR02" or "NSR03" in the Extended Area
   //
@@ -1854,6 +1924,7 @@ SupportUdfFileSystem (
     Status = EFI_UNSUPPORTED;
     goto Exit;
   }
+
   //
   // Look for "TEA01" in the Extended Area
   //

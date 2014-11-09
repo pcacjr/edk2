@@ -118,8 +118,9 @@ typedef enum {
   ((UINT32)((_Ad)->ExtentLength & ~0xC0000000UL))
 
 typedef enum {
-  LONG_ADS_SEQUENCE         = 1,
   SHORT_ADS_SEQUENCE,
+  LONG_ADS_SEQUENCE,
+  EXTENDED_ADS_SEQUENCE,
   INLINE_DATA
 } UDF_FE_RECORDING_FLAGS;
 
@@ -924,12 +925,14 @@ FindFile (
 
 EFI_STATUS
 GetAedAdsData (
-  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd,
-  OUT VOID                            **Data,
-  OUT UINT64                          *Length
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
+  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
+  IN   VOID                            *Ad,
+  OUT  VOID                            **Data,
+  OUT  UINT64                          *Length
   );
 
 EFI_STATUS

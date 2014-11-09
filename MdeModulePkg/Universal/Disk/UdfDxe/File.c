@@ -45,6 +45,7 @@ UdfOpenVolume (
   UDF_FILE_INFO                          Parent;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
   if (!This || !Root) {
     Status = EFI_INVALID_PARAMETER;
     goto ErrorInvalidParams;
@@ -65,6 +66,7 @@ UdfOpenVolume (
   if (EFI_ERROR (Status)) {
     goto ErrorReadVolFileStructure;
   }
+
   Status = GetFileSetDescriptors (
                             PrivFsData->BlockIo,
                             PrivFsData->DiskIo,
@@ -85,8 +87,10 @@ UdfOpenVolume (
   if (EFI_ERROR (Status)) {
     goto ErrorFindFe;
   }
+
   ZeroMem ((VOID *)&Parent, sizeof (UDF_FILE_INFO));
   Parent.FileEntry = PrivFileData->Root.FileEntry;
+
   Status = FindFile (
                  PrivFsData->BlockIo,
 		 PrivFsData->DiskIo,
@@ -100,6 +104,7 @@ UdfOpenVolume (
   if (EFI_ERROR (Status)) {
     goto ErrorFindFile;
   }
+
   PrivFileData->File.FileEntry = Parent.FileEntry;
 
   PrivFileData->Root.FileIdentifierDesc = PrivFileData->File.FileIdentifierDesc;
@@ -123,6 +128,7 @@ UdfOpenVolume (
 
   PrivFileData->IsRootDirectory = TRUE;
   *Root = &PrivFileData->FileIo;
+
   gBS->RestoreTPL (OldTpl);
   return Status;
 
@@ -133,14 +139,18 @@ ErrorGetFsds:
   for (Index = 0; Index < PrivFileData->Volume.LogicalVolDescsNo; Index++) {
     FreePool ((VOID *)PrivFileData->Volume.LogicalVolDescs[Index]);
   }
+
   FreePool ((VOID *)PrivFileData->Volume.LogicalVolDescs);
+
   for (Index = 0; Index < PrivFileData->Volume.PartitionDescsNo; Index++) {
     FreePool ((VOID *)PrivFileData->Volume.PartitionDescs[Index]);
   }
+
   FreePool ((VOID *)PrivFileData->Volume.PartitionDescs);
 
 ErrorReadVolFileStructure:
   FreePool ((VOID *)PrivFileData);
+
 ErrorAllocPrivFileData:
 ErrorInvalidParams:
   gBS->RestoreTPL (OldTpl);
@@ -170,27 +180,34 @@ ErrorInvalidParams:
 EFI_STATUS
 EFIAPI
 UdfOpen (
-  IN  EFI_FILE_PROTOCOL                  *This,
-  OUT EFI_FILE_PROTOCOL                  **NewHandle,
-  IN  CHAR16                             *FileName,
-  IN  UINT64                             OpenMode,
-  IN  UINT64                             Attributes
+  IN   EFI_FILE_PROTOCOL  *This,
+  OUT  EFI_FILE_PROTOCOL  **NewHandle,
+  IN   CHAR16             *FileName,
+  IN   UINT64             OpenMode,
+  IN   UINT64             Attributes
   )
 {
-  EFI_TPL                                OldTpl;
-  EFI_STATUS                             Status;
-  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  CHAR16                                 FilePath[UDF_PATH_LENGTH];
-  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
-  EFI_DISK_IO_PROTOCOL                   *DiskIo;
-  UDF_VOLUME_INFO                        *Volume;
-  UDF_FILE_INFO                          File;
-  PRIVATE_UDF_FILE_DATA                  *NewPrivFileData;
-  CHAR16                                 *TempFileName;
+  EFI_TPL                         OldTpl;
+  EFI_STATUS                      Status;
+  PRIVATE_UDF_FILE_DATA           *PrivFileData;
+  CHAR16                          FilePath[UDF_PATH_LENGTH];
+  EFI_BLOCK_IO_PROTOCOL           *BlockIo;
+  EFI_DISK_IO_PROTOCOL            *DiskIo;
+  UDF_VOLUME_INFO                 *Volume;
+  UDF_FILE_INFO                   File;
+  PRIVATE_UDF_FILE_DATA           *NewPrivFileData;
+  CHAR16                          *TempFileName;
+  UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
   if (!This || !NewHandle || !FileName) {
     Status = EFI_INVALID_PARAMETER;
+    goto ErrorInvalidParams;
+  }
+
+  if (OpenMode != EFI_FILE_MODE_READ) {
+    Status = EFI_WRITE_PROTECTED;
     goto ErrorInvalidParams;
   }
 
@@ -212,10 +229,19 @@ UdfOpen (
     StrCat (FilePath, L"\\");
     StrCat (FilePath, FileName);
   }
+
   MangleFileName (FilePath);
   if (!FilePath[0]) {
     Status = EFI_NOT_FOUND;
     goto ErrorBadFileName;
+  }
+
+  if (PrivFileData->File.FileIdentifierDesc) {
+    Icb = &PrivFileData->File.FileIdentifierDesc->Icb;
+  } else if (PrivFileData->Root.FileIdentifierDesc) {
+    Icb = &PrivFileData->Root.FileIdentifierDesc->Icb;
+  } else {
+    Icb = NULL;
   }
 
   ZeroMem ((VOID *)&File, sizeof (UDF_FILE_INFO));
@@ -226,7 +252,7 @@ UdfOpen (
 		 FilePath,
 		 &PrivFileData->Root,
 		 &PrivFileData->File,
-		 NULL,
+		 Icb,
 		 &File
                  );
   if (EFI_ERROR (Status)) {
@@ -249,11 +275,13 @@ UdfOpen (
     &File,
     sizeof (UDF_FILE_INFO)
     );
+
   StrCpy (NewPrivFileData->AbsoluteFileName, FilePath);
   FileName = NewPrivFileData->AbsoluteFileName;
   while ((TempFileName = StrStr (FileName, L"\\"))) {
     FileName = TempFileName + 1;
   }
+
   StrCpy (NewPrivFileData->FileName, FileName);
   Status = GetFileSize (
                     BlockIo,
@@ -271,6 +299,7 @@ UdfOpen (
     (VOID *)&NewPrivFileData->ReadDirInfo,
     sizeof (UDF_READ_DIRECTORY_INFO)
     );
+
   *NewHandle = &NewPrivFileData->FileIo;
   gBS->RestoreTPL (OldTpl);
   return Status;
@@ -281,6 +310,7 @@ ErrorAllocNewPrivFileData:
   if (File.FileEntry) {
     FreePool (File.FileEntry);
   }
+
   if (File.FileIdentifierDesc) {
     FreePool ((VOID *)File.FileIdentifierDesc);
   }
@@ -309,24 +339,24 @@ ErrorInvalidParams:
 EFI_STATUS
 EFIAPI
 UdfRead (
-  IN     EFI_FILE_PROTOCOL               *This,
-  IN OUT UINTN                           *BufferSize,
-  OUT    VOID                            *Buffer
+  IN      EFI_FILE_PROTOCOL  *This,
+  IN OUT  UINTN              *BufferSize,
+  OUT     VOID               *Buffer
   )
 {
-  EFI_TPL                                OldTpl;
-  EFI_STATUS                             Status;
-  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  UDF_VOLUME_INFO                        *Volume;
-  UDF_FILE_INFO                          *File;
-  UDF_READ_DIRECTORY_INFO                *ReadDirInfo;
-  EFI_BLOCK_IO_PROTOCOL                  *BlockIo;
-  EFI_DISK_IO_PROTOCOL                   *DiskIo;
-  UDF_FILE_INFO                          FoundFile;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR         *NewFileIdentifierDesc;
-  VOID                                   *NewFileEntryData;
-  CHAR16                                 FileName[UDF_FILENAME_LENGTH];
-  UINT64                                 FileSize;
+  EFI_TPL                         OldTpl;
+  EFI_STATUS                      Status;
+  PRIVATE_UDF_FILE_DATA           *PrivFileData;
+  UDF_VOLUME_INFO                 *Volume;
+  UDF_FILE_INFO                   *File;
+  UDF_READ_DIRECTORY_INFO         *ReadDirInfo;
+  EFI_BLOCK_IO_PROTOCOL           *BlockIo;
+  EFI_DISK_IO_PROTOCOL            *DiskIo;
+  UDF_FILE_INFO                   FoundFile;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR  *NewFileIdentifierDesc;
+  VOID                            *NewFileEntryData;
+  CHAR16                          FileName[UDF_FILENAME_LENGTH];
+  UINT64                          FileSize;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -395,9 +425,11 @@ UdfRead (
 	}
 	goto DoneReadDirEnt;
       }
+
       if (!IS_FID_PARENT_FILE (NewFileIdentifierDesc)) {
 	break;
       }
+
       FreePool ((VOID *)NewFileIdentifierDesc);
     }
 
@@ -432,6 +464,7 @@ UdfRead (
 	FreePool ((VOID *)FoundFile.FileIdentifierDesc);
 	goto ErrorGetFileName;
       }
+
       FreePool ((VOID *)NewFileIdentifierDesc);
       NewFileIdentifierDesc = FoundFile.FileIdentifierDesc;
     } else {
@@ -480,10 +513,12 @@ ErrorFindFileFromSymlink:
   if (NewFileEntryData) {
     FreePool (NewFileEntryData);
   }
+
 ErrorFindFe:
   if (NewFileIdentifierDesc) {
     FreePool ((VOID *)NewFileIdentifierDesc);
   }
+
 DoneReadDirEnt:
 DoneWithNoMoreDirEnts:
 DoneFileAtEof:
@@ -504,19 +539,21 @@ ErrorInvalidParams:
 EFI_STATUS
 EFIAPI
 UdfClose (
-  IN EFI_FILE_PROTOCOL                   *This
+  IN EFI_FILE_PROTOCOL  *This
   )
 {
-  EFI_TPL                                OldTpl;
-  EFI_STATUS                             Status;
-  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
+  EFI_TPL                OldTpl;
+  EFI_STATUS             Status;
+  PRIVATE_UDF_FILE_DATA  *PrivFileData;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
-  Status = EFI_SUCCESS;
+
   if (!This) {
     Status = EFI_INVALID_PARAMETER;
     goto Exit;
   }
+
+  Status = EFI_SUCCESS;
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 #if 0
@@ -562,8 +599,10 @@ UdfDelete (
   if (!This) {
     return EFI_INVALID_PARAMETER;
   }
+
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
   (VOID)PrivFileData->FileIo.Close(This);
+
   return EFI_WARN_DELETE_FAILURE;
 }
 
@@ -588,9 +627,9 @@ UdfDelete (
 EFI_STATUS
 EFIAPI
 UdfWrite (
-  IN     EFI_FILE_PROTOCOL  *This,
-  IN OUT UINTN              *BufferSize,
-  IN     VOID               *Buffer
+  IN      EFI_FILE_PROTOCOL  *This,
+  IN OUT  UINTN              *BufferSize,
+  IN      VOID               *Buffer
   )
 {
   return EFI_UNSUPPORTED;
@@ -609,12 +648,12 @@ UdfWrite (
 EFI_STATUS
 EFIAPI
 UdfGetPosition (
-  IN  EFI_FILE_PROTOCOL   *This,
-  OUT UINT64              *Position
+  IN   EFI_FILE_PROTOCOL  *This,
+  OUT  UINT64             *Position
   )
 {
-  EFI_STATUS               Status;
-  PRIVATE_UDF_FILE_DATA   *PrivFileData;
+  EFI_STATUS             Status;
+  PRIVATE_UDF_FILE_DATA  *PrivFileData;
 
   if (!This || !Position) {
     return EFI_INVALID_PARAMETER;
@@ -637,6 +676,7 @@ UdfGetPosition (
     //
     *Position = PrivFileData->FilePosition;
   }
+
   return Status;
 }
 
@@ -653,13 +693,13 @@ UdfGetPosition (
 EFI_STATUS
 EFIAPI
 UdfSetPosition (
-  IN EFI_FILE_PROTOCOL             *This,
-  IN UINT64                        Position
+  IN EFI_FILE_PROTOCOL  *This,
+  IN UINT64             Position
   )
 {
-  EFI_STATUS                       Status;
-  PRIVATE_UDF_FILE_DATA            *PrivFileData;
-  UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc;
+  EFI_STATUS                      Status;
+  PRIVATE_UDF_FILE_DATA           *PrivFileData;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc;
 
   if (!This) {
     return EFI_INVALID_PARAMETER;
@@ -667,6 +707,7 @@ UdfSetPosition (
 
   Status = EFI_SUCCESS;
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
   FileIdentifierDesc = PrivFileData->File.FileIdentifierDesc;
   if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
     //
@@ -693,6 +734,7 @@ UdfSetPosition (
   } else {
     Status = EFI_UNSUPPORTED;
   }
+
   return Status;
 }
 
@@ -717,24 +759,24 @@ UdfSetPosition (
 EFI_STATUS
 EFIAPI
 UdfGetInfo (
-  IN     EFI_FILE_PROTOCOL               *This,
-  IN     EFI_GUID                        *InformationType,
-  IN OUT UINTN                           *BufferSize,
-  OUT    VOID                            *Buffer
+  IN      EFI_FILE_PROTOCOL  *This,
+  IN      EFI_GUID           *InformationType,
+  IN OUT  UINTN              *BufferSize,
+  OUT     VOID               *Buffer
   )
 {
-  EFI_STATUS                             Status;
-  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  EFI_FILE_SYSTEM_INFO                   *FileSystemInfo;
-  UINTN                                  FileSystemInfoLength;
-  CHAR16                                 *String;
-  UDF_FILE_SET_DESCRIPTOR                *FileSetDesc;
-  UINTN                                  Index;
-  UINT8                                  *OstaCompressed;
-  UINT8                                  CompressionId;
-  UINT64                                 VolumeSize;
-  UINT64                                 FreeSpaceSize;
-  CHAR16                                 VolumeLabel[64];
+  EFI_STATUS               Status;
+  PRIVATE_UDF_FILE_DATA    *PrivFileData;
+  EFI_FILE_SYSTEM_INFO     *FileSystemInfo;
+  UINTN                    FileSystemInfoLength;
+  CHAR16                   *String;
+  UDF_FILE_SET_DESCRIPTOR  *FileSetDesc;
+  UINTN                    Index;
+  UINT8                    *OstaCompressed;
+  UINT8                    CompressionId;
+  UINT64                   VolumeSize;
+  UINT64                   FreeSpaceSize;
+  CHAR16                   VolumeLabel[64];
 
   if (!This || !InformationType || !BufferSize || (*BufferSize && !Buffer)) {
     return EFI_INVALID_PARAMETER;
@@ -761,6 +803,7 @@ UdfGetInfo (
       Status = EFI_VOLUME_CORRUPTED;
       goto Exit;
     }
+
     for (Index = 1; Index < 128; Index++) {
       if (CompressionId == 16) {
 	*String = *(UINT8 *)(OstaCompressed + Index) << 8;
@@ -768,6 +811,7 @@ UdfGetInfo (
       } else {
 	*String = 0;
       }
+
       if (Index < 128) {
 	*String |= *(UINT8 *)(OstaCompressed + Index);
       }
@@ -779,8 +823,10 @@ UdfGetInfo (
       if (!*String) {
 	break;
       }
+
       String++;
     }
+
     *String = L'\0';
 
     FileSystemInfoLength = StrSize (VolumeLabel) +
@@ -808,6 +854,7 @@ UdfGetInfo (
     FileSystemInfo->BlockSize   = PrivFileData->BlockIo->Media->BlockSize;
     FileSystemInfo->VolumeSize  = VolumeSize;
     FileSystemInfo->FreeSpace   = FreeSpaceSize;
+
     *BufferSize = FileSystemInfoLength;
     Status = EFI_SUCCESS;
   } else {
@@ -838,10 +885,10 @@ Exit:
 EFI_STATUS
 EFIAPI
 UdfSetInfo (
-  IN EFI_FILE_PROTOCOL*This,
-  IN EFI_GUID         *InformationType,
-  IN UINTN            BufferSize,
-  IN VOID             *Buffer
+  IN EFI_FILE_PROTOCOL  *This,
+  IN EFI_GUID           *InformationType,
+  IN UINTN              BufferSize,
+  IN VOID               *Buffer
   )
 {
   return EFI_WRITE_PROTECTED;
