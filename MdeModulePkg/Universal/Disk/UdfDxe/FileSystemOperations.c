@@ -31,8 +31,8 @@ FindAnchorVolumeDescriptorPointer (
   UINT32      BlockSize;
   EFI_LBA     EndLBA;
 
-  BlockSize = BlockIo->Media->BlockSize;
-  EndLBA = BlockIo->Media->LastBlock;
+  BlockSize  = BlockIo->Media->BlockSize;
+  EndLBA     = BlockIo->Media->LastBlock;
 
   Status = DiskIo->ReadDisk (
                        DiskIo,
@@ -104,13 +104,13 @@ StartMainVolumeDescriptorSequence (
   UDF_PARTITION_DESCRIPTOR       *PartitionDesc;
   UINTN                          Index;
 
-  BlockSize     = BlockIo->Media->BlockSize;
-  ExtentAd      = &AnchorPoint->MainVolumeDescriptorSequenceExtent;
-  StartingLsn   = ExtentAd->ExtentLocation;
-  EndingLsn     = StartingLsn + DivU64x32 (
-                                       ExtentAd->ExtentLength,
-				       BlockSize
-                                       );
+  BlockSize    = BlockIo->Media->BlockSize;
+  ExtentAd     = &AnchorPoint->MainVolumeDescriptorSequenceExtent;
+  StartingLsn  = ExtentAd->ExtentLocation;
+  EndingLsn    = StartingLsn + DivU64x32 (
+                                     ExtentAd->ExtentLength,
+				     BlockSize
+                                     );
 
   Volume->LogicalVolDescs =
     (UDF_LOGICAL_VOLUME_DESCRIPTOR **)AllocateZeroPool (ExtentAd->ExtentLength);
@@ -132,8 +132,8 @@ StartMainVolumeDescriptorSequence (
     goto ErrorAllocBuf;
   }
 
-  Volume->LogicalVolDescsNo   = 0;
-  Volume->PartitionDescsNo    = 0;
+  Volume->LogicalVolDescsNo  = 0;
+  Volume->PartitionDescsNo   = 0;
   while (StartingLsn <= EndingLsn) {
     Status = DiskIo->ReadDisk (
                          DiskIo,
@@ -164,6 +164,7 @@ StartMainVolumeDescriptorSequence (
 	Buffer,
 	sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR)
 	);
+
       Volume->LogicalVolDescs[Volume->LogicalVolDescsNo] = LogicalVolDesc;
       Volume->LogicalVolDescsNo++;
     } else if (IS_PD (Buffer)) {
@@ -180,6 +181,7 @@ StartMainVolumeDescriptorSequence (
 	Buffer,
 	sizeof (UDF_PARTITION_DESCRIPTOR)
 	);
+
       Volume->PartitionDescs[Volume->PartitionDescsNo] = PartitionDesc;
       Volume->PartitionDescsNo++;
     }
@@ -188,6 +190,7 @@ StartMainVolumeDescriptorSequence (
   }
 
   FreePool (Buffer);
+
   return Status;
 
 ErrorAllocPd:
@@ -274,12 +277,12 @@ FindFileSetDescriptor (
   UINT32                         BlockSize;
   UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc;
 
-  LogicalVolDesc = Volume->LogicalVolDescs[LogicalVolDescNo];
-  Lsn = GetLongAdLsn (
-                Volume,
-		&LogicalVolDesc->LogicalVolumeContentsUse
-                );
-  BlockSize = BlockIo->Media->BlockSize;
+  LogicalVolDesc  = Volume->LogicalVolDescs[LogicalVolDescNo];
+  Lsn             = GetLongAdLsn (
+                              Volume,
+                              &LogicalVolDesc->LogicalVolumeContentsUse
+                              );
+  BlockSize       = BlockIo->Media->BlockSize;
 
   Status = DiskIo->ReadDisk (
                        DiskIo,
@@ -322,6 +325,7 @@ GetFileSetDescriptors (
   }
 
   Status = EFI_SUCCESS;
+
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     FileSetDesc = AllocateZeroPool (sizeof (UDF_FILE_SET_DESCRIPTOR));
     if (!FileSetDesc) {
@@ -344,6 +348,7 @@ GetFileSetDescriptors (
   }
 
   Volume->FileSetDescsNo = Volume->LogicalVolDescsNo;
+
   return Status;
 
 ErrorFindFsd:
@@ -351,7 +356,9 @@ ErrorFindFsd:
   for (Index = 0; Index < Count; Index++) {
     FreePool ((VOID *)Volume->FileSetDescs[Index]);
   }
+
   FreePool ((VOID *)Volume->FileSetDescs);
+
 ErrorAllocFsd:
   return Status;
 }
@@ -406,14 +413,16 @@ GetInlineDataInformation (
 
   if (IS_EFE (FileEntryData)) {
     ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-    *Length = ExtendedFileEntry->InformationLength;
-    *Data = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
-		     ExtendedFileEntry->LengthOfExtendedAttributes);
+
+    *Length  = ExtendedFileEntry->InformationLength;
+    *Data    = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
+			ExtendedFileEntry->LengthOfExtendedAttributes);
   } else if (IS_FE (FileEntryData)) {
     FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-    *Length = FileEntry->InformationLength;
-    *Data = (VOID *)((UINT8 *)&FileEntry->Data[0] +
-		     FileEntry->LengthOfExtendedAttributes);
+
+    *Length  = FileEntry->InformationLength;
+    *Data    = (VOID *)((UINT8 *)&FileEntry->Data[0] +
+			FileEntry->LengthOfExtendedAttributes);
   }
 }
 
@@ -429,14 +438,16 @@ GetFileEntryData (
 
   if (IS_EFE (FileEntryData)) {
     ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-    *Length = ExtendedFileEntry->InformationLength;
-    *Data = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
-		     ExtendedFileEntry->LengthOfExtendedAttributes);
+
+    *Length  = ExtendedFileEntry->InformationLength;
+    *Data    = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
+			ExtendedFileEntry->LengthOfExtendedAttributes);
   } else if (IS_FE (FileEntryData)) {
     FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-    *Length = FileEntry->InformationLength;
-    *Data = (VOID *)((UINT8 *)&FileEntry->Data[0] +
-		     FileEntry->LengthOfExtendedAttributes);
+
+    *Length  = FileEntry->InformationLength;
+    *Data    = (VOID *)((UINT8 *)&FileEntry->Data[0] +
+			FileEntry->LengthOfExtendedAttributes);
   }
 }
 
@@ -562,6 +573,7 @@ NextPathComponent:
   }
 
   FreePool (ReadFileInfo.FileData);
+
   return EFI_SUCCESS;
 
 ErrorFindFile:
@@ -576,6 +588,7 @@ ErrorFindFile:
   }
 
   FreePool (ReadFileInfo.FileData);
+
   return Status;
 }
 
@@ -592,8 +605,8 @@ FindFileEntry (
   UINT64      Lsn;
   UINT32      BlockSize;
 
-  Lsn = GetLongAdLsn (Volume, Icb);
-  BlockSize = BlockIo->Media->BlockSize;
+  Lsn        = GetLongAdLsn (Volume, Icb);
+  BlockSize  = BlockIo->Media->BlockSize;
 
   *FileEntry = AllocateZeroPool (BlockSize);
   if (!*FileEntry) {
@@ -621,6 +634,7 @@ FindFileEntry (
 ErrorInvalidFe:
 ErrorReadDiskBlk:
   FreePool (*FileEntry);
+
   return Status;
 }
 
@@ -649,6 +663,7 @@ DuplicateFid (
   UINT64 FidLength;
 
   FidLength = GetFidDescriptorLength (FileIdentifierDesc);
+
   *NewFileIdentifierDesc =
     (UDF_FILE_IDENTIFIER_DESCRIPTOR *)AllocateZeroPool (FidLength);
   ASSERT (*NewFileIdentifierDesc);
@@ -669,6 +684,7 @@ DuplicateFe (
   UINT32 BlockSize;
 
   BlockSize = BlockIo->Media->BlockSize;
+
   *NewFileEntry = AllocateZeroPool (BlockSize);
   ASSERT (*NewFileEntry);
   CopyMem (*NewFileEntry, FileEntry, BlockSize);
@@ -691,6 +707,7 @@ GetFileNameFromFid (
 	   FileIdentifierDesc->LengthOfImplementationUse
            );
   CompressionId = OstaCompressed[0];
+
   //
   // Check for valid compression ID
   //
@@ -837,6 +854,7 @@ SkipFid:
 
 ErrorFindFe:
   FreePool ((VOID *)FileIdentifierDesc);
+
   return Status;
 }
 
@@ -1070,11 +1088,11 @@ ReadFileData (
   EFI_STATUS          Status;
   UDF_READ_FILE_INFO  ReadFileInfo;
 
-  ReadFileInfo.Flags = READ_FILE_SEEK_AND_READ;
-  ReadFileInfo.FilePosition = *FilePosition;
-  ReadFileInfo.FileData = Buffer;
-  ReadFileInfo.FileDataSize = *BufferSize;
-  ReadFileInfo.FileSize = FileSize;
+  ReadFileInfo.Flags         = READ_FILE_SEEK_AND_READ;
+  ReadFileInfo.FilePosition  = *FilePosition;
+  ReadFileInfo.FileData      = Buffer;
+  ReadFileInfo.FileDataSize  = *BufferSize;
+  ReadFileInfo.FileSize      = FileSize;
 
   Status = ReadFile (
                  BlockIo,
@@ -1090,6 +1108,7 @@ ReadFileData (
 
   *BufferSize = ReadFileInfo.FileDataSize;
   *FilePosition = ReadFileInfo.FilePosition;
+
   return EFI_SUCCESS;
 }
 
@@ -1116,12 +1135,17 @@ GetAedAdsOffset (
 
   if (RecordingFlags == SHORT_ADS_SEQUENCE) {
     ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)Ad;
-    ExtentLength = GET_EXTENT_LENGTH (ShortAd);
-    Lsn = GetShortAdLsn (GetPdFromLongAd (Volume, ParentIcb), ShortAd);
+
+    ExtentLength  = GET_EXTENT_LENGTH (ShortAd);
+    Lsn           = GetShortAdLsn (
+                              GetPdFromLongAd (Volume, ParentIcb),
+                              ShortAd
+                              );
   } else if (RecordingFlags == LONG_ADS_SEQUENCE) {
     LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)Ad;
-    ExtentLength = GET_EXTENT_LENGTH (LongAd);
-    Lsn = GetLongAdLsn (Volume, LongAd);
+
+    ExtentLength  = GET_EXTENT_LENGTH (LongAd);
+    Lsn           = GetLongAdLsn (Volume, LongAd);
   }
 
   Data = AllocatePool (ExtentLength);
@@ -1755,10 +1779,9 @@ GetVolumeSize (
   UINTN                         Length;
   UINT32                        LsnsNo;
 
-  BlockSize = BlockIo->Media->BlockSize;
-
-  *VolumeSize = 0;
-  *FreeSpaceSize = 0;
+  BlockSize       = BlockIo->Media->BlockSize;
+  *VolumeSize     = 0;
+  *FreeSpaceSize  = 0;
 
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     CopyMem (

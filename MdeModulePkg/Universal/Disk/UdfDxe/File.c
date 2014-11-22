@@ -32,17 +32,17 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 EFI_STATUS
 EFIAPI
 UdfOpenVolume (
-  IN EFI_SIMPLE_FILE_SYSTEM_PROTOCOL     *This,
-  OUT EFI_FILE_PROTOCOL                  **Root
+  IN   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *This,
+  OUT  EFI_FILE_PROTOCOL                **Root
   )
 {
-  EFI_TPL                                OldTpl;
-  EFI_STATUS                             Status;
-  PRIVATE_UDF_SIMPLE_FS_DATA             *PrivFsData;
-  PRIVATE_UDF_FILE_DATA                  *PrivFileData;
-  UDF_FILE_SET_DESCRIPTOR                **FileSetDescs;
-  UINTN                                  Index;
-  UDF_FILE_INFO                          Parent;
+  EFI_TPL                     OldTpl;
+  EFI_STATUS                  Status;
+  PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
+  PRIVATE_UDF_FILE_DATA       *PrivFileData;
+  UDF_FILE_SET_DESCRIPTOR     **FileSetDescs;
+  UINTN                       Index;
+  UDF_FILE_INFO               Parent;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -52,6 +52,7 @@ UdfOpenVolume (
   }
 
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (This);
+
   PrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
   if (!PrivFileData) {
     Status = EFI_OUT_OF_RESOURCES;
@@ -77,6 +78,7 @@ UdfOpenVolume (
   }
 
   FileSetDescs = PrivFileData->Volume.FileSetDescs;
+
   Status = FindFileEntry (
                       PrivFsData->BlockIo,
 		      PrivFsData->DiskIo,
@@ -105,9 +107,18 @@ UdfOpenVolume (
     goto ErrorFindFile;
   }
 
-  PrivFileData->File.FileEntry = Parent.FileEntry;
-
   PrivFileData->Root.FileIdentifierDesc = PrivFileData->File.FileIdentifierDesc;
+
+  DuplicateFe (
+         PrivFsData->BlockIo,
+         PrivFileData->Root.FileEntry,
+         &PrivFileData->File.FileEntry
+         );
+  DuplicateFid (
+         PrivFileData->Root.FileIdentifierDesc,
+         &PrivFileData->File.FileIdentifierDesc
+         );
+
   PrivFileData->File.FileEntry = PrivFileData->Root.FileEntry;
   PrivFileData->Signature   = PRIVATE_UDF_FILE_DATA_SIGNATURE;
   PrivFileData->SimpleFs    = This;
@@ -130,6 +141,7 @@ UdfOpenVolume (
   *Root = &PrivFileData->FileIo;
 
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 
 ErrorFindFile:
@@ -154,6 +166,7 @@ ErrorReadVolFileStructure:
 ErrorAllocPrivFileData:
 ErrorInvalidParams:
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 }
 
@@ -212,9 +225,10 @@ UdfOpen (
   }
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
-  BlockIo = PrivFileData->BlockIo;
-  DiskIo  = PrivFileData->DiskIo;
-  Volume  = &PrivFileData->Volume;
+
+  BlockIo  = PrivFileData->BlockIo;
+  DiskIo   = PrivFileData->DiskIo;
+  Volume   = &PrivFileData->Volume;
 
   //
   // Build full path
@@ -245,6 +259,7 @@ UdfOpen (
   }
 
   ZeroMem ((VOID *)&File, sizeof (UDF_FILE_INFO));
+
   Status = FindFile (
                  PrivFileData->BlockIo,
 		 PrivFileData->DiskIo,
@@ -278,6 +293,7 @@ UdfOpen (
 
   StrCpy (NewPrivFileData->AbsoluteFileName, FilePath);
   FileName = NewPrivFileData->AbsoluteFileName;
+
   while ((TempFileName = StrStr (FileName, L"\\"))) {
     FileName = TempFileName + 1;
   }
@@ -301,7 +317,9 @@ UdfOpen (
     );
 
   *NewHandle = &NewPrivFileData->FileIo;
+
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 
 ErrorGetFileSize:
@@ -319,6 +337,7 @@ ErrorFindFile:
 ErrorBadFileName:
 ErrorInvalidParams:
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 }
 
@@ -367,13 +386,13 @@ UdfRead (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  BlockIo                 = PrivFileData->BlockIo;
-  DiskIo                  = PrivFileData->DiskIo;
-  Volume                  = &PrivFileData->Volume;
-  File                    = &PrivFileData->File;
-  ReadDirInfo             = &PrivFileData->ReadDirInfo;
-  NewFileIdentifierDesc   = NULL;
-  NewFileEntryData        = NULL;
+  BlockIo                = PrivFileData->BlockIo;
+  DiskIo                 = PrivFileData->DiskIo;
+  Volume                 = &PrivFileData->Volume;
+  File                   = &PrivFileData->File;
+  ReadDirInfo            = &PrivFileData->ReadDirInfo;
+  NewFileIdentifierDesc  = NULL;
+  NewFileEntryData       = NULL;
 
   if (IS_FID_NORMAL_FILE (File->FileIdentifierDesc)) {
     if (PrivFileData->FilePosition > PrivFileData->FileSize) {
@@ -459,6 +478,7 @@ UdfRead (
 
       FreePool ((VOID *)NewFileEntryData);
       NewFileEntryData = FoundFile.FileEntry;
+
       Status = GetFileNameFromFid (NewFileIdentifierDesc, FileName);
       if (EFI_ERROR (Status)) {
 	FreePool ((VOID *)FoundFile.FileIdentifierDesc);
@@ -470,6 +490,7 @@ UdfRead (
     } else {
       FoundFile.FileIdentifierDesc   = NewFileIdentifierDesc;
       FoundFile.FileEntry            = NewFileEntryData;
+
       Status = GetFileNameFromFid (FoundFile.FileIdentifierDesc, FileName);
       if (EFI_ERROR (Status)) {
 	goto ErrorGetFileName;
@@ -525,6 +546,7 @@ DoneFileAtEof:
 ErrorFileBeyondTheEof:
 ErrorInvalidParams:
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 }
 
@@ -556,6 +578,7 @@ UdfClose (
   Status = EFI_SUCCESS;
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
 #if 0
   if (PrivFileData->File.FileEntry) {
     //
@@ -576,6 +599,7 @@ UdfClose (
 
 Exit:
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 }
 
@@ -601,6 +625,7 @@ UdfDelete (
   }
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
   (VOID)PrivFileData->FileIo.Close(This);
 
   return EFI_WARN_DELETE_FAILURE;
@@ -660,7 +685,9 @@ UdfGetPosition (
   }
 
   Status = EFI_SUCCESS;
+
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
   //
   // As per UEFI spec, if the file handle is a directory, then the current file
   // position has no meaning and the operation is not supported.
@@ -706,6 +733,7 @@ UdfSetPosition (
   }
 
   Status = EFI_SUCCESS;
+
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
   FileIdentifierDesc = PrivFileData->File.FileIdentifierDesc;
@@ -783,6 +811,7 @@ UdfGetInfo (
   }
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
   if (CompareGuid (InformationType, &gEfiFileInfoGuid)) {
     Status = SetFileInfo (
                      &PrivFileData->File,
