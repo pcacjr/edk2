@@ -402,6 +402,7 @@ UdfRead (
       Status = EFI_DEVICE_ERROR;
       goto ErrorFileBeyondTheEof;
     }
+
     if (PrivFileData->FilePosition == PrivFileData->FileSize) {
       *BufferSize = 0;
       Status = EFI_SUCCESS;
@@ -442,6 +443,7 @@ UdfRead (
 	  *BufferSize = 0;
 	  Status = EFI_SUCCESS;
 	}
+
 	goto DoneReadDirEnt;
       }
 
