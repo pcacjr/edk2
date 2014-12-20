@@ -339,8 +339,6 @@ GetFileSetDescriptors (
     return EFI_OUT_OF_RESOURCES;
   }
 
-  Status = EFI_SUCCESS;
-
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     FileSetDesc = AllocateZeroPool (sizeof (UDF_FILE_SET_DESCRIPTOR));
     if (!FileSetDesc) {
@@ -364,7 +362,7 @@ GetFileSetDescriptors (
 
   Volume->FileSetDescsNo = Volume->LogicalVolDescsNo;
 
-  return Status;
+  return EFI_SUCCESS;
 
 Error_Find_Fsd:
   Count = Index + 1;
@@ -618,7 +616,7 @@ FindFileEntry (
     goto ErrorInvalidFe;
   }
 
-  return Status;
+  return EFI_SUCCESS;
 
 ErrorInvalidFe:
 ErrorReadDiskBlk:
@@ -954,6 +952,7 @@ GetShortAdFromAds (
   )
 {
   UDF_SHORT_ALLOCATION_DESCRIPTOR *ShortAd;
+  UDF_EXTENT_FLAGS                ExtentFlags;
 
   for (;;) {
     if (*Offset >= Length) {
@@ -962,19 +961,18 @@ GetShortAdFromAds (
 
     ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)((UINT8 *)Data +
 						  *Offset);
-    switch (GET_EXTENT_FLAGS (SHORT_ADS_SEQUENCE, ShortAd)) {
-      case EXTENT_NOT_RECORDED_BUT_ALLOCATED:
-      case EXTENT_NOT_RECORDED_NOT_ALLOCATED:
-	*Offset += sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR);
-	continue;
-      case EXTENT_IS_NEXT_EXTENT:
-      case EXTENT_RECORDED_AND_ALLOCATED:
-	goto Done;
+
+    ExtentFlags = GET_EXTENT_FLAGS (SHORT_ADS_SEQUENCE, ShortAd);
+    if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
+	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
+      break;
     }
+
+    *Offset += AD_LENGTH (SHORT_ADS_SEQUENCE);
   }
 
-Done:
   *FoundShortAd = ShortAd;
+
   return EFI_SUCCESS;
 }
 
@@ -986,7 +984,8 @@ GetLongAdFromAds (
   OUT     UDF_LONG_ALLOCATION_DESCRIPTOR  **FoundLongAd
   )
 {
-  UDF_LONG_ALLOCATION_DESCRIPTOR       *LongAd;
+  UDF_LONG_ALLOCATION_DESCRIPTOR  *LongAd;
+  UDF_EXTENT_FLAGS                ExtentFlags;
 
   for (;;) {
     if (*Offset >= Length) {
@@ -997,19 +996,18 @@ GetLongAdFromAds (
                                            (UINT8 *)Data +
 					   *Offset
                                            );
-    switch (GET_EXTENT_FLAGS (LONG_ADS_SEQUENCE, LongAd)) {
-      case EXTENT_NOT_RECORDED_BUT_ALLOCATED:
-      case EXTENT_NOT_RECORDED_NOT_ALLOCATED:
-	*Offset += sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR);
-	continue;
-      case EXTENT_IS_NEXT_EXTENT:
-      case EXTENT_RECORDED_AND_ALLOCATED:
-	goto Done;
+
+    ExtentFlags = GET_EXTENT_FLAGS (LONG_ADS_SEQUENCE, LongAd);
+    if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
+	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
+      break;
     }
+
+    *Offset += AD_LENGTH (LONG_ADS_SEQUENCE);
   }
 
-Done:
   *FoundLongAd = LongAd;
+
   return EFI_SUCCESS;
 }
 
@@ -1077,6 +1075,7 @@ GetFileSize (
   UDF_READ_FILE_INFO  ReadFileInfo;
 
   ReadFileInfo.Flags = READ_FILE_GET_FILESIZE;
+
   Status = ReadFile (
                  BlockIo,
 		 DiskIo,
@@ -1165,6 +1164,7 @@ GetAedAdsOffset (
   }
 
   BlockSize = BlockIo->Media->BlockSize;
+
   Status = DiskIo->ReadDisk (
                           DiskIo,
 			  BlockIo->Media->MediaId,
@@ -1296,12 +1296,11 @@ ReadFile (
 
   switch (ReadFileInfo->Flags) {
     case READ_FILE_GET_FILESIZE:
-      ReadFileInfo->ReadLength = 0;
-      break;
     case READ_FILE_ALLOCATE_AND_READ:
-      ReadFileInfo->FileData = NULL;
       ReadFileInfo->ReadLength = 0;
+      ReadFileInfo->FileData = NULL;
       break;
+
     case READ_FILE_SEEK_AND_READ:
       Length = ReadFileInfo->FileSize - ReadFileInfo->FilePosition;
       if (ReadFileInfo->FileDataSize > Length) {
@@ -1315,6 +1314,7 @@ ReadFile (
       DataOffset = 0;
       FilePosition = 0;
       FinishedSeeking = FALSE;
+
       break;
   }
 
@@ -1322,12 +1322,10 @@ ReadFile (
   switch (RecordingFlags) {
     case INLINE_DATA:
       GetFileEntryData (FileEntryData, &Data, &Length);
-      switch (ReadFileInfo->Flags) {
-	case READ_FILE_GET_FILESIZE:
-	  ReadFileInfo->ReadLength = Length;
-	  break;
 
-	case READ_FILE_ALLOCATE_AND_READ:
+      if (ReadFileInfo->Flags == READ_FILE_GET_FILESIZE) {
+	  ReadFileInfo->ReadLength = Length;
+      } else if (ReadFileInfo->Flags == READ_FILE_ALLOCATE_AND_READ) {
 	  ReadFileInfo->FileData = AllocatePool (Length);
 	  if (!ReadFileInfo->FileData) {
 	    return EFI_OUT_OF_RESOURCES;
@@ -1335,16 +1333,14 @@ ReadFile (
 
 	  CopyMem (ReadFileInfo->FileData, Data, Length);
 	  ReadFileInfo->ReadLength = Length;
-	  break;
-
-	case READ_FILE_SEEK_AND_READ:
+      } else if (ReadFileInfo->Flags == READ_FILE_SEEK_AND_READ) {
 	  CopyMem (
 	    ReadFileInfo->FileData,
 	    (VOID *)((UINT8 *)Data + ReadFileInfo->FilePosition),
 	    ReadFileInfo->FileDataSize
 	    );
+
 	  ReadFileInfo->FilePosition += ReadFileInfo->FileDataSize;
-	  break;
       }
 
       break;
@@ -1353,6 +1349,7 @@ ReadFile (
     case SHORT_ADS_SEQUENCE:
       GetAdsInformation (FileEntryData, &Data, &Length);
       AdOffset = 0;
+
       for (;;) {
 	Status = GetAllocationDescriptor (
                                   RecordingFlags,
@@ -1485,7 +1482,7 @@ Skip_File_Seek:
 	}
 
 Skip_Ad:
-	AdOffset += GET_AD_LENGTH (RecordingFlags, Ad);
+	AdOffset += AD_LENGTH (RecordingFlags);
       }
 
       break;
@@ -1672,18 +1669,9 @@ SetFileInfo (
                          ExtendedFileEntry->AccessTime.HundredsOfMicroseconds;
   }
 
-  //
-  // For OSTA UDF compliant media, the time within the UDF_TIMESTAMP
-  // structures should be interpreted as Local Time. Use
-  // EFI_UNSPECIFIED_TIMEZONE for Local Time.
-  //
   FileInfo->CreateTime.TimeZone   = EFI_UNSPECIFIED_TIMEZONE;
   FileInfo->CreateTime.Daylight   = EFI_TIME_ADJUST_DAYLIGHT;
 
-  //
-  // As per ECMA-167 specification, the Modification Time should be identical
-  // to the content of the Access Time field.
-  //
   CopyMem (
     (VOID *)&FileInfo->ModificationTime,
     (VOID *)&FileInfo->LastAccessTime,

@@ -124,7 +124,7 @@ typedef enum {
   EXTENT_IS_NEXT_EXTENT,
 } UDF_EXTENT_FLAGS;
 
-#define GET_AD_LENGTH(_RecFlags, _Ad) \
+#define AD_LENGTH(_RecFlags) \
   ((_RecFlags) == SHORT_ADS_SEQUENCE ? \
    ((UINT64)(sizeof (UDF_SHORT_ALLOCATION_DESCRIPTOR))) : \
    ((UINT64)(sizeof (UDF_LONG_ALLOCATION_DESCRIPTOR))))

@@ -721,7 +721,7 @@ UdfSetPosition (
     return EFI_INVALID_PARAMETER;
   }
 
-  Status = EFI_SUCCESS;
+  Status = EFI_UNSUPPORTED;
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
@@ -732,11 +732,10 @@ UdfSetPosition (
     // zero. This has no effect of starting the read proccess of the directory
     // entries over.
     //
-    if (Position) {
-      Status = EFI_UNSUPPORTED;
-    } else {
+    if (!Position) {
       PrivFileData->FilePosition = Position;
       PrivFileData->ReadDirInfo.FidOffset = 0;
+      Status = EFI_SUCCESS;
     }
   } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
     //
@@ -748,8 +747,8 @@ UdfSetPosition (
     } else {
       PrivFileData->FilePosition = Position;
     }
-  } else {
-    Status = EFI_UNSUPPORTED;
+
+    Status = EFI_SUCCESS;
   }
 
   return Status;
