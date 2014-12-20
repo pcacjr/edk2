@@ -49,6 +49,11 @@ UDF_DEVICE_PATH gUdfDevicePath = {
   }
 };
 
+EFI_SIMPLE_FILE_SYSTEM_PROTOCOL gUdfSimpleFsOps = {
+  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION,
+  UdfOpenVolume
+};
+
 /**
   Test to see if this driver supports ControllerHandle. Any ControllerHandle
   than contains a BlockIo and DiskIo protocol or a BlockIo2 protocol can be
@@ -225,10 +230,15 @@ UdfDriverBindingStart (
   PrivFsData->BlockIo   = BlockIo;
   PrivFsData->DiskIo    = DiskIo;
 
-  PrivFsData->SimpleFs.Revision   = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
-  PrivFsData->SimpleFs.OpenVolume = UdfOpenVolume;
+  CopyMem (
+    (VOID *)&PrivFsData->SimpleFs,
+    (VOID *)&gUdfSimpleFsOps,
+    sizeof (EFI_SIMPLE_FILE_SYSTEM_PROTOCOL)
+    );
 
-  PrivFsData->DevicePath = DuplicateDevicePath ((EFI_DEVICE_PATH_PROTOCOL *)&gUdfDevicePath);
+  PrivFsData->DevicePath = DuplicateDevicePath (
+                                     (EFI_DEVICE_PATH_PROTOCOL *)&gUdfDevicePath
+                                     );
 
   //
   // Install new child handle

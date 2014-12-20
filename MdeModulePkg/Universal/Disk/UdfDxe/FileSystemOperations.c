@@ -205,10 +205,15 @@ ErrorAllocLvd:
 
 ErrorReadDiskBlk:
   FreePool (Buffer);
+
 ErrorAllocBuf:
   FreePool ((VOID *)Volume->PartitionDescs);
+  Volume->PartitionDescs = NULL;
+
 ErrorAllocPds:
   FreePool ((VOID *)Volume->LogicalVolDescs);
+  Volume->LogicalVolDescs = NULL;
+
 ErrorAllocLvds:
   return Status;
 }
@@ -378,6 +383,7 @@ ErrorFindFsd:
   }
 
   FreePool ((VOID *)Volume->FileSetDescs);
+  Volume->FileSetDescs = NULL;
 
 ErrorAllocFsd:
   return Status;
@@ -1951,4 +1957,54 @@ SupportUdfFileSystem (
 
 Exit:
   return Status;
+}
+
+VOID
+CleanUpVolumeInformation (
+  IN UDF_VOLUME_INFO *Volume
+  )
+{
+  UINTN Index;
+
+  if (Volume->LogicalVolDescs) {
+    for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
+      FreePool ((VOID *)Volume->LogicalVolDescs[Index]);
+    }
+
+    FreePool ((VOID *)Volume->LogicalVolDescs);
+  }
+
+  if (Volume->PartitionDescs) {
+    for (Index = 0; Index < Volume->PartitionDescsNo; Index++) {
+      FreePool ((VOID *)Volume->PartitionDescs[Index]);
+    }
+
+    FreePool ((VOID *)Volume->PartitionDescs);
+  }
+
+  if (Volume->FileSetDescs) {
+    for (Index = 0; Index < Volume->FileSetDescsNo; Index++) {
+      FreePool ((VOID *)Volume->FileSetDescs[Index]);
+    }
+
+    FreePool ((VOID *)Volume->FileSetDescs);
+  }
+
+  ZeroMem ((VOID *)Volume, sizeof (UDF_VOLUME_INFO));
+}
+
+VOID
+CleanUpFileInformation (
+  IN UDF_FILE_INFO *File
+  )
+{
+  if (File->FileEntry) {
+    FreePool (File->FileEntry);
+  }
+
+  if (File->FileIdentifierDesc) {
+    FreePool ((VOID *)File->FileIdentifierDesc);
+  }
+
+  ZeroMem ((VOID *)File, sizeof (UDF_FILE_INFO));
 }

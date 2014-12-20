@@ -973,6 +973,16 @@ MangleFileName (
   CHAR16           *FileName
   );
 
+VOID
+CleanUpFileInformation (
+  IN UDF_FILE_INFO *File
+  );
+
+VOID
+CleanUpVolumeInformation (
+  IN UDF_VOLUME_INFO *Volume
+  );
+
 /**
   Test to see if this driver supports ControllerHandle. Any ControllerHandle
   than contains a BlockIo and DiskIo protocol can be supported.

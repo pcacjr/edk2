@@ -14,6 +14,30 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
+EFI_FILE_PROTOCOL gUdfFileIoOps = {
+  EFI_FILE_PROTOCOL_REVISION,
+  UdfOpen,
+  UdfClose,
+  UdfDelete,
+  UdfRead,
+  UdfWrite,
+  UdfGetPosition,
+  UdfSetPosition,
+  UdfGetInfo,
+  UdfSetInfo,
+  UdfFlush,
+  NULL,
+  NULL,
+  NULL,
+  NULL
+};
+
+#define _ROOT_FILE(_PrivData) (_PrivData)->Root
+#define _PARENT_FILE(_PrivData) \
+  ((_PrivData)->IsRootDirectory ? (_PrivData)->Root : &(_PrivData)->File)
+#define _FILE(_PrivData) _PARENT_FILE(_PrivData)
+#define _ICB(_PrivData) &_FILE(_PrivData)->FileIdentifierDesc->Icb
+
 /**
   Open the root directory on a volume.
 
@@ -41,7 +65,6 @@ UdfOpenVolume (
   PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
   UDF_FILE_SET_DESCRIPTOR     **FileSetDescs;
-  UINTN                       Index;
   UDF_FILE_INFO               Parent;
   UDF_FILE_INFO               File;
 
@@ -50,12 +73,6 @@ UdfOpenVolume (
   if (!This || !Root) {
     Status = EFI_INVALID_PARAMETER;
     goto ErrorInvalidParams;
-  }
-
-  PrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
-  if (!PrivFileData) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocPrivFileData;
   }
 
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (This);
@@ -80,15 +97,7 @@ UdfOpenVolume (
     }
   }
 
-  if (PrivFsData->Root.FileEntry) {
-    FreePool (PrivFsData->Root.FileEntry);
-    PrivFsData->Root.FileEntry = NULL;
-  }
-
-  if (PrivFsData->Root.FileIdentifierDesc) {
-    FreePool ((VOID *)PrivFsData->Root.FileIdentifierDesc);
-    PrivFsData->Root.FileIdentifierDesc = NULL;
-  }
+  CleanUpFileInformation (&PrivFsData->Root);
 
   FileSetDescs = PrivFsData->Volume.FileSetDescs;
 
@@ -103,9 +112,8 @@ UdfOpenVolume (
     goto ErrorFindFe;
   }
 
-  ZeroMem ((VOID *)&Parent, sizeof (UDF_FILE_INFO));
-
   Parent.FileEntry = PrivFsData->Root.FileEntry;
+  Parent.FileIdentifierDesc = NULL;
 
   Status = FindFile (
                  PrivFsData->BlockIo,
@@ -123,23 +131,22 @@ UdfOpenVolume (
 
   PrivFsData->Root.FileIdentifierDesc = File.FileIdentifierDesc;
 
-  PrivFileData->Root = &PrivFsData->Root;
-  PrivFileData->IsRootDirectory = TRUE;
+  PrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
+  if (!PrivFileData) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto ErrorAllocPrivFileData;
+  }
 
-  PrivFileData->Signature  = PRIVATE_UDF_FILE_DATA_SIGNATURE;
-  PrivFileData->SimpleFs   = This;
+  PrivFileData->Root             = &PrivFsData->Root;
+  PrivFileData->IsRootDirectory  = TRUE;
+  PrivFileData->Signature        = PRIVATE_UDF_FILE_DATA_SIGNATURE;
+  PrivFileData->SimpleFs         = This;
 
-  PrivFileData->FileIo.Revision     = EFI_FILE_PROTOCOL_REVISION;
-  PrivFileData->FileIo.Open         = UdfOpen;
-  PrivFileData->FileIo.Close        = UdfClose;
-  PrivFileData->FileIo.Delete       = UdfDelete;
-  PrivFileData->FileIo.Read         = UdfRead;
-  PrivFileData->FileIo.Write        = UdfWrite;
-  PrivFileData->FileIo.GetPosition  = UdfGetPosition;
-  PrivFileData->FileIo.SetPosition  = UdfSetPosition;
-  PrivFileData->FileIo.GetInfo      = UdfGetInfo;
-  PrivFileData->FileIo.SetInfo      = UdfSetInfo;
-  PrivFileData->FileIo.Flush        = UdfFlush;
+  CopyMem (
+    (VOID *)&PrivFileData->FileIo,
+    (VOID *)&gUdfFileIoOps,
+    sizeof (EFI_FILE_PROTOCOL)
+    );
 
   *Root = &PrivFileData->FileIo;
 
@@ -149,33 +156,17 @@ UdfOpenVolume (
 
   return Status;
 
+ErrorAllocPrivFileData:
 ErrorFindFile:
   FreePool (PrivFileData->File.FileEntry);
 
 ErrorFindFe:
-  for (Index = 0; Index < PrivFsData->Volume.FileSetDescsNo; Index++) {
-    FreePool ((VOID *)PrivFsData->Volume.FileSetDescs[Index]);
-  }
-
-  FreePool ((VOID *)PrivFsData->Volume.FileSetDescs);
-
 ErrorGetFsds:
-  for (Index = 0; Index < PrivFsData->Volume.LogicalVolDescsNo; Index++) {
-    FreePool ((VOID *)PrivFsData->Volume.LogicalVolDescs[Index]);
-  }
-
-  FreePool ((VOID *)PrivFsData->Volume.LogicalVolDescs);
-
-  for (Index = 0; Index < PrivFsData->Volume.PartitionDescsNo; Index++) {
-    FreePool ((VOID *)PrivFsData->Volume.PartitionDescs[Index]);
-  }
-
-  FreePool ((VOID *)PrivFsData->Volume.PartitionDescs);
+  CleanUpVolumeInformation (&PrivFsData->Volume);
 
 ErrorReadVolFileStructure:
   FreePool ((VOID *)PrivFileData);
 
-ErrorAllocPrivFileData:
 ErrorInvalidParams:
   gBS->RestoreTPL (OldTpl);
 
@@ -220,9 +211,6 @@ UdfOpen (
   UDF_FILE_INFO                   File;
   PRIVATE_UDF_FILE_DATA           *NewPrivFileData;
   CHAR16                          *TempFileName;
-  UDF_FILE_INFO                   *Root;
-  UDF_FILE_INFO                   *Parent;
-  UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -257,24 +245,14 @@ UdfOpen (
     goto ErrorBadFileName;
   }
 
-  Root = PrivFileData->Root;
-
-  if (Root) {
-    Parent = Root;
-  } else {
-    Parent = &PrivFileData->File;
-  }
-
-  Icb = &Parent->FileIdentifierDesc->Icb;
-
   Status = FindFile (
                  PrivFsData->BlockIo,
 		 PrivFsData->DiskIo,
 		 &PrivFsData->Volume,
 		 FilePath,
-		 Root,
-		 Parent,
-		 Icb,
+		 _ROOT_FILE (PrivFileData),
+		 _PARENT_FILE (PrivFileData),
+		 _ICB (PrivFileData),
 		 &File
                  );
   if (EFI_ERROR (Status)) {
@@ -337,13 +315,7 @@ ErrorGetFileSize:
   FreePool ((VOID *)NewPrivFileData);
 
 ErrorAllocNewPrivFileData:
-  if (File.FileEntry) {
-    FreePool (File.FileEntry);
-  }
-
-  if (File.FileIdentifierDesc) {
-    FreePool ((VOID *)File.FileIdentifierDesc);
-  }
+  CleanUpFileInformation (&File);
 
 ErrorFindFile:
 ErrorBadFileName:
@@ -408,11 +380,7 @@ UdfRead (
   NewFileIdentifierDesc  = NULL;
   NewFileEntryData       = NULL;
 
-  if (PrivFileData->IsRootDirectory) {
-    Parent = PrivFileData->Root;
-  } else {
-    Parent = &PrivFileData->File;
-  }
+  Parent = _PARENT_FILE (PrivFileData);
 
   Status = EFI_VOLUME_CORRUPTED;
 
@@ -590,7 +558,6 @@ UdfClose (
   EFI_STATUS                  Status;
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
   PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
-  UINTN                       Index;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -606,13 +573,7 @@ UdfClose (
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
 
   if (!PrivFileData->IsRootDirectory) {
-    if (PrivFileData->File.FileEntry) {
-      FreePool (PrivFileData->File.FileEntry);
-    }
-
-    if (PrivFileData->File.FileIdentifierDesc) {
-      FreePool ((VOID *)PrivFileData->File.FileIdentifierDesc);
-    }
+    CleanUpFileInformation (&PrivFileData->File);
 
     if (PrivFileData->ReadDirInfo.DirectoryData) {
       FreePool (PrivFileData->ReadDirInfo.DirectoryData);
@@ -620,24 +581,7 @@ UdfClose (
   }
 
   if (!--PrivFsData->OpenFiles) {
-    for (Index = 0; Index < PrivFsData->Volume.LogicalVolDescsNo; Index++) {
-      FreePool ((VOID *)PrivFsData->Volume.LogicalVolDescs[Index]);
-    }
-
-    FreePool ((VOID *)PrivFsData->Volume.LogicalVolDescs);
-
-    for (Index = 0; Index < PrivFsData->Volume.PartitionDescsNo; Index++) {
-      FreePool ((VOID *)PrivFsData->Volume.PartitionDescs[Index]);
-    }
-
-    FreePool ((VOID *)PrivFsData->Volume.PartitionDescs);
-
-    for (Index = 0; Index < PrivFsData->Volume.FileSetDescsNo; Index++) {
-      FreePool ((VOID *)PrivFsData->Volume.FileSetDescs[Index]);
-    }
-
-    FreePool ((VOID *)PrivFsData->Volume.FileSetDescs);
-    ZeroMem ((VOID *)&PrivFsData->Volume, sizeof (UDF_VOLUME_INFO));
+    CleanUpVolumeInformation (&PrivFsData->Volume);
   }
 
   FreePool ((VOID *)PrivFileData);
@@ -841,7 +785,6 @@ UdfGetInfo (
   EFI_STATUS                  Status;
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
   PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
-  UDF_FILE_INFO               *File;
   EFI_FILE_SYSTEM_INFO        *FileSystemInfo;
   UINTN                       FileSystemInfoLength;
   CHAR16                      *String;
@@ -861,17 +804,11 @@ UdfGetInfo (
 
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
 
-  if (PrivFileData->IsRootDirectory) {
-    File = PrivFileData->Root;
-  } else {
-    File = &PrivFileData->File;
-  }
-
   Status = EFI_UNSUPPORTED;
 
   if (CompareGuid (InformationType, &gEfiFileInfoGuid)) {
     Status = SetFileInfo (
-                     File,
+                     _FILE (PrivFileData),
 		     PrivFileData->FileSize,
 		     PrivFileData->FileName,
 		     BufferSize,
@@ -906,7 +843,7 @@ UdfGetInfo (
       }
 
       //
-      // Unlike FID Identifiers, Logical Volume Identifier is in a
+      // Unlike FID Identifiers, Logical Volume Identifier is stored in a
       // NULL-terminated OSTA compressed format, so we must check for the NULL
       // character.
       //
