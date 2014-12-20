@@ -42,13 +42,11 @@ FindAnchorVolumeDescriptorPointer (
                        (VOID *)AnchorPoint
                        );
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
-  Status = EFI_VOLUME_CORRUPTED;
   if (IS_AVDP (AnchorPoint)) {
-    Status = EFI_SUCCESS;
-    goto Exit;
+    return EFI_SUCCESS;
   }
 
   Status = DiskIo->ReadDisk (
@@ -59,12 +57,11 @@ FindAnchorVolumeDescriptorPointer (
                        (VOID *)AnchorPoint
                        );
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
   if (IS_AVDP (AnchorPoint)) {
-    Status = EFI_SUCCESS;
-    goto Exit;
+    return EFI_SUCCESS;
   }
 
   Status = DiskIo->ReadDisk (
@@ -75,15 +72,14 @@ FindAnchorVolumeDescriptorPointer (
                        (VOID *)AnchorPoint
                        );
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
   if (IS_AVDP (AnchorPoint)) {
-    Status = EFI_SUCCESS;
+    return EFI_SUCCESS;
   }
 
-Exit:
-  return Status;
+  return EFI_VOLUME_CORRUPTED;
 }
 
 EFI_STATUS
@@ -115,8 +111,7 @@ StartMainVolumeDescriptorSequence (
   Volume->LogicalVolDescs =
     (UDF_LOGICAL_VOLUME_DESCRIPTOR **)AllocateZeroPool (ExtentAd->ExtentLength);
   if (!Volume->LogicalVolDescs) {
-    Status = EFI_OUT_OF_RESOURCES;
-    goto Error_Alloc_Lvds;
+    return EFI_OUT_OF_RESOURCES;
   }
 
   Volume->PartitionDescs =
@@ -214,7 +209,6 @@ Error_Alloc_Pds:
   FreePool ((VOID *)Volume->LogicalVolDescs);
   Volume->LogicalVolDescs = NULL;
 
-Error_Alloc_Lvds:
   return Status;
 }
 
@@ -226,14 +220,13 @@ GetPdFromLongAd (
 {
   UINTN                     Index;
   UDF_PARTITION_DESCRIPTOR  *PartitionDesc;
+  UINT16                    PartitionNum;
 
   for (Index = 0; Index < Volume->PartitionDescsNo; Index++) {
     PartitionDesc = Volume->PartitionDescs[Index];
-    if (
-      PartitionDesc->PartitionNumber ==
-      LongAd->ExtentLocation.PartitionReferenceNumber
-      )
-    {
+
+    PartitionNum = PartitionDesc->PartitionNumber;
+    if (PartitionNum == LongAd->ExtentLocation.PartitionReferenceNumber) {
       return PartitionDesc;
     }
   }
@@ -250,9 +243,6 @@ GetLongAdLsn (
   UDF_PARTITION_DESCRIPTOR *PartitionDesc;
 
   PartitionDesc = GetPdFromLongAd (Volume, LongAd);
-  if (!PartitionDesc) {
-    return 0;
-  }
 
   return (UINT64)(PartitionDesc->PartitionStartingLocation +
 		  LongAd->ExtentLocation.LogicalBlockNumber);
@@ -418,38 +408,7 @@ ReadVolumeFileStructure (
     return Status;
   }
 
-  //
-  // TODO: handle FSDs in multiple LVDs
-  //
-  ASSERT (Volume->LogicalVolDescsNo == 1);
-  ASSERT (Volume->PartitionDescsNo);
-
   return Status;
-}
-
-VOID
-GetInlineDataInformation (
-  IN   VOID    *FileEntryData,
-  OUT  VOID    **Data,
-  OUT  UINT64  *Length
-  )
-{
-  UDF_EXTENDED_FILE_ENTRY  *ExtendedFileEntry;
-  UDF_FILE_ENTRY           *FileEntry;
-
-  if (IS_EFE (FileEntryData)) {
-    ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-
-    *Length  = ExtendedFileEntry->InformationLength;
-    *Data    = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
-			ExtendedFileEntry->LengthOfExtendedAttributes);
-  } else if (IS_FE (FileEntryData)) {
-    FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-
-    *Length  = FileEntry->InformationLength;
-    *Data    = (VOID *)((UINT8 *)&FileEntry->Data[0] +
-			FileEntry->LengthOfExtendedAttributes);
-  }
 }
 
 VOID
@@ -501,6 +460,7 @@ ResolveSymlink (
   UDF_FILE_INFO       PreviousFile;
 
   ReadFileInfo.Flags = READ_FILE_ALLOCATE_AND_READ;
+
   Status = ReadFile (
                  BlockIo,
 		 DiskIo,
@@ -513,25 +473,28 @@ ResolveSymlink (
     return Status;
   }
 
-  Data = (UINT8 *)ReadFileInfo.FileData;
   Length = ReadFileInfo.ReadLength;
-  EndData = (UINT8 *)(Data + Length);
+
+  Data = (UINT8 *)ReadFileInfo.FileData;
+  EndData = Data + Length;
+
   CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
+
   for (;;) {
     PathComp = (UDF_PATH_COMPONENT *)Data;
+
     PathCompLength = PathComp->LengthOfComponentIdentifier;
+
     switch (PathComp->ComponentType) {
       case 3:
 	FileName[0] = L'.';
 	FileName[1] = L'.';
 	FileName[2] = L'\0';
 	break;
+
       case 5:
 	CompressionId = PathComp->ComponentIdentifier[0];
-	//
-	// Check for valid compression ID
-	//
-	if (CompressionId != 8 && CompressionId != 16) {
+	if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
 	  return EFI_VOLUME_CORRUPTED;
 	}
 
@@ -554,10 +517,12 @@ ResolveSymlink (
 
 	*C = L'\0';
 	break;
+
       case 4:
 	DuplicateFe (BlockIo, PreviousFile.FileEntry, &File->FileEntry);
 	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
 	goto NextPathComponent;
+
       default:
 	Print (
 	  L"Warning: Unhandled Path Component Type %d\n",
@@ -591,8 +556,7 @@ NextPathComponent:
 	  sizeof (UDF_FILE_INFO)
 	  )
       ) {
-      FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
-      FreePool (PreviousFile.FileEntry);
+      CleanupFileInformation (&PreviousFile);
     }
 
     CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
@@ -609,8 +573,7 @@ ErrorFindFile:
 	sizeof (UDF_FILE_INFO)
 	)
     ) {
-    FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
-    FreePool (PreviousFile.FileEntry);
+    CleanupFileInformation (&PreviousFile);
   }
 
   FreePool (ReadFileInfo.FileData);
@@ -693,6 +656,7 @@ DuplicateFid (
   *NewFileIdentifierDesc =
     (UDF_FILE_IDENTIFIER_DESCRIPTOR *)AllocateZeroPool (FidLength);
   ASSERT (*NewFileIdentifierDesc);
+
   CopyMem (
     (VOID *)*NewFileIdentifierDesc,
     (VOID *)FileIdentifierDesc,
@@ -713,6 +677,7 @@ DuplicateFe (
 
   *NewFileEntry = AllocateZeroPool (BlockSize);
   ASSERT (*NewFileEntry);
+
   CopyMem (*NewFileEntry, FileEntry, BlockSize);
 }
 
@@ -732,12 +697,9 @@ GetFileNameFromFid (
            (UINT8 *)&FileIdentifierDesc->Data[0] +
 	   FileIdentifierDesc->LengthOfImplementationUse
            );
-  CompressionId = OstaCompressed[0];
 
-  //
-  // Check for valid compression ID
-  //
-  if (CompressionId != 8 && CompressionId != 16) {
+  CompressionId = OstaCompressed[0];
+  if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
     return EFI_VOLUME_CORRUPTED;
   }
 
@@ -757,6 +719,7 @@ GetFileNameFromFid (
   }
 
   *FileName = L'\0';
+
   return EFI_SUCCESS;
 }
 
@@ -786,12 +749,14 @@ InternalFindFile (
   if (!StrCmp (FileName, L".")) {
     DuplicateFe (BlockIo, Parent->FileEntry, &File->FileEntry);
     DuplicateFid (Parent->FileIdentifierDesc, &File->FileIdentifierDesc);
+
     return EFI_SUCCESS;
   }
 
   ZeroMem ((VOID *)&ReadDirInfo, sizeof (UDF_READ_DIRECTORY_INFO));
   Found = FALSE;
   FileNameLength = StrLen (FileName);
+
   for (;;) {
     Status = ReadDirectoryEntry (
                              BlockIo,
@@ -845,6 +810,7 @@ Skip_Fid:
     Status = EFI_SUCCESS;
 
     File->FileIdentifierDesc = FileIdentifierDesc;
+
     //
     // If the requested file is root directory, so no FE needed
     //
@@ -867,7 +833,6 @@ Skip_Fid:
 	    )
 	 ) {
 	File->FileEntry = CompareFileEntry;
-	Status = EFI_SUCCESS;
       } else {
 	FreePool ((VOID *)FileIdentifierDesc);
 	FreePool ((VOID *)CompareFileEntry);
@@ -945,7 +910,9 @@ FindFile (
 
     if (IS_FE_SYMLINK (File->FileEntry)) {
       FreePool ((VOID *)File->FileIdentifierDesc);
+
       FileEntry = File->FileEntry;
+
       Status = ResolveSymlink (
                            BlockIo,
 			   DiskIo,
@@ -966,8 +933,7 @@ FindFile (
 	  sizeof (UDF_FILE_INFO)
 	  )
       ) {
-      FreePool ((VOID *)PreviousFile.FileIdentifierDesc);
-      FreePool (PreviousFile.FileEntry);
+      CleanupFileInformation (&PreviousFile);
     }
 
     CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
@@ -1355,7 +1321,7 @@ ReadFile (
   RecordingFlags = GET_FE_RECORDING_FLAGS (FileEntryData);
   switch (RecordingFlags) {
     case INLINE_DATA:
-      GetInlineDataInformation (FileEntryData, &Data, &Length);
+      GetFileEntryData (FileEntryData, &Data, &Length);
       switch (ReadFileInfo->Flags) {
 	case READ_FILE_GET_FILESIZE:
 	  ReadFileInfo->ReadLength = Length;
@@ -1960,7 +1926,7 @@ Exit:
 }
 
 VOID
-CleanUpVolumeInformation (
+CleanupVolumeInformation (
   IN UDF_VOLUME_INFO *Volume
   )
 {
@@ -1994,7 +1960,7 @@ CleanUpVolumeInformation (
 }
 
 VOID
-CleanUpFileInformation (
+CleanupFileInformation (
   IN UDF_FILE_INFO *File
   )
 {

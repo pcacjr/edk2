@@ -149,6 +149,9 @@ typedef enum {
 #define GET_FID_FROM_ADS(_Data, _Offs) \
   ((UDF_FILE_IDENTIFIER_DESCRIPTOR *)((UINT8 *)(_Data) + (_Offs)))
 
+#define IS_VALID_COMPRESSION_ID(_CompId) \
+  ((BOOLEAN)((_CompId) == 8 || (_CompId) == 16))
+
 #pragma pack(1)
 
 #define UDF_STANDARD_IDENTIFIER_LENGTH   5
@@ -974,12 +977,12 @@ MangleFileName (
   );
 
 VOID
-CleanUpFileInformation (
+CleanupFileInformation (
   IN UDF_FILE_INFO *File
   );
 
 VOID
-CleanUpVolumeInformation (
+CleanupVolumeInformation (
   IN UDF_VOLUME_INFO *Volume
   );
 

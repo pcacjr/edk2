@@ -97,7 +97,7 @@ UdfOpenVolume (
     }
   }
 
-  CleanUpFileInformation (&PrivFsData->Root);
+  CleanupFileInformation (&PrivFsData->Root);
 
   FileSetDescs = PrivFsData->Volume.FileSetDescs;
 
@@ -162,7 +162,7 @@ Error_Find_File:
 
 Error_Find_Fe:
 Error_Get_Fsds:
-  CleanUpVolumeInformation (&PrivFsData->Volume);
+  CleanupVolumeInformation (&PrivFsData->Volume);
 
 Error_Read_Vol_File_Structure:
   FreePool ((VOID *)PrivFileData);
@@ -315,7 +315,7 @@ Error_Get_File_Size:
   FreePool ((VOID *)NewPrivFileData);
 
 Error_Alloc_New_Priv_File_Data:
-  CleanUpFileInformation (&File);
+  CleanupFileInformation (&File);
 
 Error_Find_File:
 Error_Bad_FileName:
@@ -573,7 +573,7 @@ UdfClose (
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
 
   if (!PrivFileData->IsRootDirectory) {
-    CleanUpFileInformation (&PrivFileData->File);
+    CleanupFileInformation (&PrivFileData->File);
 
     if (PrivFileData->ReadDirInfo.DirectoryData) {
       FreePool (PrivFileData->ReadDirInfo.DirectoryData);
@@ -581,7 +581,7 @@ UdfClose (
   }
 
   if (!--PrivFsData->OpenFiles) {
-    CleanUpVolumeInformation (&PrivFsData->Volume);
+    CleanupVolumeInformation (&PrivFsData->Volume);
   }
 
   FreePool ((VOID *)PrivFileData);
@@ -820,14 +820,10 @@ UdfGetInfo (
     FileSetDesc = PrivFsData->Volume.FileSetDescs[0];
 
     OstaCompressed = &FileSetDesc->LogicalVolumeIdentifier[0];
-    CompressionId = FileSetDesc->LogicalVolumeIdentifier[0];
 
-    //
-    // Check for valid compression ID
-    //
-    if (CompressionId != 8 && CompressionId != 16) {
-      Status = EFI_VOLUME_CORRUPTED;
-      goto Exit;
+    CompressionId = OstaCompressed[0];
+    if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
+      return EFI_VOLUME_CORRUPTED;
     }
 
     for (Index = 1; Index < 128; Index++) {
@@ -860,8 +856,7 @@ UdfGetInfo (
                            sizeof (EFI_FILE_SYSTEM_INFO);
     if (*BufferSize < FileSystemInfoLength) {
       *BufferSize = FileSystemInfoLength;
-      Status = EFI_BUFFER_TOO_SMALL;
-      goto Exit;
+      return EFI_BUFFER_TOO_SMALL;
     }
 
     FileSystemInfo = (EFI_FILE_SYSTEM_INFO *)Buffer;
@@ -873,7 +868,7 @@ UdfGetInfo (
 			&VolumeSize,
 			&FreeSpaceSize);
     if (EFI_ERROR (Status)) {
-      goto Exit;
+      return Status;
     }
 
     FileSystemInfo->Size        = FileSystemInfoLength;
@@ -886,7 +881,6 @@ UdfGetInfo (
     Status = EFI_SUCCESS;
   }
 
-Exit:
   return Status;
 }
 
