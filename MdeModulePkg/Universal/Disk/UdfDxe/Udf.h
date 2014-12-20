@@ -492,19 +492,16 @@ typedef struct {
 
 typedef struct {
   UINTN                            Signature;
-  UDF_VOLUME_INFO                  Volume;
-  UDF_FILE_INFO                    Root;
+  BOOLEAN                          IsRootDirectory;
+  UDF_FILE_INFO                    *Root;
   UDF_FILE_INFO                    File;
   UDF_READ_DIRECTORY_INFO          ReadDirInfo;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *SimpleFs;
-  EFI_BLOCK_IO_PROTOCOL            *BlockIo;
-  EFI_DISK_IO_PROTOCOL             *DiskIo;
   EFI_FILE_PROTOCOL                FileIo;
   CHAR16                           AbsoluteFileName[UDF_PATH_LENGTH];
   CHAR16                           FileName[UDF_FILENAME_LENGTH];
   UINT64                           FileSize;
   UINT64                           FilePosition;
-  BOOLEAN                          IsRootDirectory;
 } PRIVATE_UDF_FILE_DATA;
 
 #define PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE SIGNATURE_32 ('U', 'd', 'f', 's')
@@ -523,6 +520,9 @@ typedef struct {
   EFI_DISK_IO_PROTOCOL             *DiskIo;
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  SimpleFs;
   EFI_DEVICE_PATH_PROTOCOL         *DevicePath;
+  UDF_VOLUME_INFO                  Volume;
+  UDF_FILE_INFO                    Root;
+  UINTN                            OpenFiles;
   EFI_HANDLE                       Handle;
 } PRIVATE_UDF_SIMPLE_FS_DATA;
 

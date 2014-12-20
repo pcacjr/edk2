@@ -106,7 +106,7 @@ UdfDriverBindingSupported (
   //
   Status = SupportUdfFileSystem (BlockIo, DiskIo);
   if (EFI_ERROR (Status)) {
-    goto Error_No_Udf_FileSystem;
+    goto Error_No_Udf_Volume;
   }
 
   Status = gBS->OpenProtocol (
@@ -130,7 +130,7 @@ UdfDriverBindingSupported (
   }
 
   if (EFI_ERROR (Status)) {
-Error_No_Udf_FileSystem:
+Error_No_Udf_Volume:
 Error_Open_BlockIo:
     gBS->CloseProtocol (
            ControllerHandle,
@@ -221,13 +221,14 @@ UdfDriverBindingStart (
   //
   // Create new child handle
   //
-  PrivFsData->Signature   = PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE;
-  PrivFsData->BlockIo     = BlockIo;
-  PrivFsData->DiskIo      = DiskIo;
+  PrivFsData->Signature = PRIVATE_UDF_SIMPLE_FS_DATA_SIGNATURE;
+  PrivFsData->BlockIo   = BlockIo;
+  PrivFsData->DiskIo    = DiskIo;
+
   PrivFsData->SimpleFs.Revision   = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
   PrivFsData->SimpleFs.OpenVolume = UdfOpenVolume;
+
   PrivFsData->DevicePath = DuplicateDevicePath ((EFI_DEVICE_PATH_PROTOCOL *)&gUdfDevicePath);
-  PrivFsData->Handle = NULL;
 
   //
   // Install new child handle
@@ -247,6 +248,7 @@ UdfDriverBindingStart (
 
 Exit:
   gBS->RestoreTPL (OldTpl);
+
   return Status;
 }
 

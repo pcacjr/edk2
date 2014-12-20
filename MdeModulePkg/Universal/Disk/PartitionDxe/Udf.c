@@ -130,7 +130,7 @@ SupportUdfFileSystem (
   UDF_VOLUME_DESCRIPTOR                 TerminatingVolDescriptor;
   UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  AnchorPoint;
 
-  ZeroMem ((VOID *)&TerminatingVolDescriptor, sizeof (UDF_VOLUME_DESCRIPTOR));
+  ZeroMem ((VOID *) &TerminatingVolDescriptor, sizeof (UDF_VOLUME_DESCRIPTOR));
   //
   // Start Volume Recognition Sequence
   //

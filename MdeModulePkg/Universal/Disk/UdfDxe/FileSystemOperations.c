@@ -807,7 +807,7 @@ InternalFindFile (
     }
 
     if (IS_FID_PARENT_FILE (FileIdentifierDesc)) {
-      if ((!StrCmp (FileName, L"..")) || (!StrCmp (FileName, L"\\"))) {
+      if (!StrCmp (FileName, L"..") || !StrCmp (FileName, L"\\")) {
 	Found = TRUE;
 	break;
       }
@@ -837,6 +837,7 @@ SkipFid:
 
   if (Found) {
     Status = EFI_SUCCESS;
+
     File->FileIdentifierDesc = FileIdentifierDesc;
     //
     // If the requested file is root directory, so no FE needed
@@ -859,9 +860,8 @@ SkipFid:
 	    BlockIo->Media->BlockSize
 	    )
 	 ) {
-	File->FileIdentifierDesc   = FileIdentifierDesc;
-	File->FileEntry            = CompareFileEntry;
-	Status                     = EFI_SUCCESS;
+	File->FileEntry = CompareFileEntry;
+	Status = EFI_SUCCESS;
       } else {
 	FreePool ((VOID *)FileIdentifierDesc);
 	FreePool ((VOID *)CompareFileEntry);
@@ -1589,6 +1589,7 @@ ReadDirectoryEntry (
   } while (IS_FID_DELETED_FILE (FileIdentifierDesc));
 
   DuplicateFid (FileIdentifierDesc, FoundFileIdentifierDesc);
+
   return EFI_SUCCESS;
 }
 
@@ -1724,6 +1725,7 @@ SetFileInfo (
   }
 
   *BufferSize = FileInfoLength;
+
   return EFI_SUCCESS;
 }
 
