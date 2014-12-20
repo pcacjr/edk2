@@ -116,20 +116,20 @@ StartMainVolumeDescriptorSequence (
     (UDF_LOGICAL_VOLUME_DESCRIPTOR **)AllocateZeroPool (ExtentAd->ExtentLength);
   if (!Volume->LogicalVolDescs) {
     Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocLvds;
+    goto Error_Alloc_Lvds;
   }
 
   Volume->PartitionDescs =
     (UDF_PARTITION_DESCRIPTOR **)AllocateZeroPool (ExtentAd->ExtentLength);
   if (!Volume->PartitionDescs) {
     Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocPds;
+    goto Error_Alloc_Pds;
   }
 
   Buffer = AllocateZeroPool (BlockSize);
   if (!Buffer) {
     Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocBuf;
+    goto Error_Alloc_Buf;
   }
 
   Volume->LogicalVolDescsNo  = 0;
@@ -143,7 +143,7 @@ StartMainVolumeDescriptorSequence (
 			 Buffer
                          );
     if (EFI_ERROR (Status)) {
-      goto ErrorReadDiskBlk;
+      goto Error_Read_Disk_Blk;
     }
 
     if (IS_TD (Buffer)) {
@@ -156,7 +156,7 @@ StartMainVolumeDescriptorSequence (
 	AllocateZeroPool (sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR));
       if (!LogicalVolDesc) {
 	Status = EFI_OUT_OF_RESOURCES;
-	goto ErrorAllocLvd;
+	goto Error_Alloc_Lvd;
       }
 
       CopyMem (
@@ -173,7 +173,7 @@ StartMainVolumeDescriptorSequence (
 	AllocateZeroPool (sizeof (UDF_PARTITION_DESCRIPTOR));
       if (!PartitionDesc) {
 	Status = EFI_OUT_OF_RESOURCES;
-	goto ErrorAllocPd;
+	goto Error_Alloc_Pd;
       }
 
       CopyMem (
@@ -193,8 +193,8 @@ StartMainVolumeDescriptorSequence (
 
   return Status;
 
-ErrorAllocPd:
-ErrorAllocLvd:
+Error_Alloc_Pd:
+Error_Alloc_Lvd:
   for (Index = 0; Index < Volume->PartitionDescsNo; Index++) {
     FreePool ((VOID *)Volume->PartitionDescs[Index]);
   }
@@ -203,18 +203,18 @@ ErrorAllocLvd:
     FreePool ((VOID *)Volume->LogicalVolDescs[Index]);
   }
 
-ErrorReadDiskBlk:
+Error_Read_Disk_Blk:
   FreePool (Buffer);
 
-ErrorAllocBuf:
+Error_Alloc_Buf:
   FreePool ((VOID *)Volume->PartitionDescs);
   Volume->PartitionDescs = NULL;
 
-ErrorAllocPds:
+Error_Alloc_Pds:
   FreePool ((VOID *)Volume->LogicalVolDescs);
   Volume->LogicalVolDescs = NULL;
 
-ErrorAllocLvds:
+Error_Alloc_Lvds:
   return Status;
 }
 
@@ -355,7 +355,7 @@ GetFileSetDescriptors (
     FileSetDesc = AllocateZeroPool (sizeof (UDF_FILE_SET_DESCRIPTOR));
     if (!FileSetDesc) {
       Status = EFI_OUT_OF_RESOURCES;
-      goto ErrorAllocFsd;
+      goto Error_Alloc_Fsd;
     }
 
     Status = FindFileSetDescriptor (
@@ -366,7 +366,7 @@ GetFileSetDescriptors (
 				FileSetDesc
                                 );
     if (EFI_ERROR (Status)) {
-      goto ErrorFindFsd;
+      goto Error_Find_Fsd;
     }
 
     Volume->FileSetDescs[Index] = FileSetDesc;
@@ -376,7 +376,7 @@ GetFileSetDescriptors (
 
   return Status;
 
-ErrorFindFsd:
+Error_Find_Fsd:
   Count = Index + 1;
   for (Index = 0; Index < Count; Index++) {
     FreePool ((VOID *)Volume->FileSetDescs[Index]);
@@ -385,7 +385,7 @@ ErrorFindFsd:
   FreePool ((VOID *)Volume->FileSetDescs);
   Volume->FileSetDescs = NULL;
 
-ErrorAllocFsd:
+Error_Alloc_Fsd:
   return Status;
 }
 
@@ -819,7 +819,7 @@ InternalFindFile (
       }
     } else {
       if (FileNameLength != FileIdentifierDesc->LengthOfFileIdentifier - 1) {
-	goto SkipFid;
+	goto Skip_Fid;
       }
 
       Status = GetFileNameFromFid (FileIdentifierDesc, FoundFileName);
@@ -833,7 +833,7 @@ InternalFindFile (
       }
     }
 
-SkipFid:
+Skip_Fid:
     FreePool ((VOID *)FileIdentifierDesc);
   }
 
@@ -857,7 +857,7 @@ SkipFid:
 			  &CompareFileEntry
                           );
       if (EFI_ERROR (Status)) {
-	goto ErrorFindFe;
+	goto Error_Find_Fe;
       }
 
       if (CompareMem (
@@ -878,7 +878,7 @@ SkipFid:
 
   return Status;
 
-ErrorFindFe:
+Error_Find_Fe:
   FreePool ((VOID *)FileIdentifierDesc);
 
   return Status;
@@ -1418,7 +1418,7 @@ ReadFile (
 			      &Length
                               );
 	  if (EFI_ERROR (Status)) {
-	    goto ErrorGetAed;
+	    goto Error_Get_Aed;
 	  }
 
 	  AdOffset = 0;
@@ -1447,7 +1447,7 @@ ReadFile (
 				     ReadFileInfo->ReadLength
                                      );
 	    if (EFI_ERROR (Status)) {
-	      goto ErrorAllocBufferToNextAd;
+	      goto Error_Alloc_Buffer_To_Next_Ad;
 	    }
 
 	    Status = DiskIo->ReadDisk (
@@ -1459,7 +1459,7 @@ ReadFile (
 					     ReadFileInfo->ReadLength)
                                   );
 	    if (EFI_ERROR (Status)) {
-	      goto ErrorReadDiskBlk;
+	      goto Error_Read_Disk_Blk;
 	    }
 
 	    ReadFileInfo->ReadLength += ExtentLength;
@@ -1468,12 +1468,12 @@ ReadFile (
 	  case READ_FILE_SEEK_AND_READ:
 	    if (FinishedSeeking) {
 	      Offset = 0;
-	      goto SkipFileSeek;
+	      goto Skip_File_Seek;
 	    }
 
 	    if (FilePosition + ExtentLength < ReadFileInfo->FilePosition) {
 	      FilePosition += ExtentLength;
-	      goto SkipAd;
+	      goto Skip_Ad;
 	    }
 
 	    if (FilePosition + ExtentLength > ReadFileInfo->FilePosition) {
@@ -1487,7 +1487,7 @@ ReadFile (
 
 	    FinishedSeeking = TRUE;
 
-SkipFileSeek:
+Skip_File_Seek:
 	    if (ExtentLength - Offset > BytesLeft) {
 	      DataLength = BytesLeft;
 	    } else {
@@ -1503,7 +1503,7 @@ SkipFileSeek:
 					     DataOffset)
                                     );
 	    if (EFI_ERROR (Status)) {
-	      goto ErrorReadDiskBlk;
+	      goto Error_Read_Disk_Blk;
 	    }
 
 	    DataOffset += DataLength;
@@ -1518,7 +1518,7 @@ SkipFileSeek:
 	    break;
 	}
 
-SkipAd:
+Skip_Ad:
 	AdOffset += GET_AD_LENGTH (RecordingFlags, Ad);
       }
 
@@ -1535,8 +1535,8 @@ Done:
 
   return Status;
 
-ErrorReadDiskBlk:
-ErrorAllocBufferToNextAd:
+Error_Read_Disk_Blk:
+Error_Alloc_Buffer_To_Next_Ad:
   if (ReadFileInfo->Flags != READ_FILE_SEEK_AND_READ) {
     FreePool (ReadFileInfo->FileData);
   }
@@ -1545,7 +1545,7 @@ ErrorAllocBufferToNextAd:
     FreePool (Data);
   }
 
-ErrorGetAed:
+Error_Get_Aed:
   return Status;
 }
 
@@ -1766,7 +1766,7 @@ GetVolumeSize (
       continue;
     }
 
-ReadNextSequence:
+Read_Next_Sequence:
     LogicalVolInt = (UDF_LOGICAL_VOLUME_INTEGRITY *)AllocatePool (
                                                           ExtentAd.ExtentLength
                                                           );
@@ -1824,7 +1824,7 @@ ReadNextSequence:
       );
     if (ExtentAd.ExtentLength) {
       FreePool ((VOID *)LogicalVolInt);
-      goto ReadNextSequence;
+      goto Read_Next_Sequence;
     }
 
     FreePool ((VOID *)LogicalVolInt);

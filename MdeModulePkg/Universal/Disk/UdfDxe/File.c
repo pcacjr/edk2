@@ -72,7 +72,7 @@ UdfOpenVolume (
 
   if (!This || !Root) {
     Status = EFI_INVALID_PARAMETER;
-    goto ErrorInvalidParams;
+    goto Error_Invalid_Params;
   }
 
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (This);
@@ -84,7 +84,7 @@ UdfOpenVolume (
 			      &PrivFsData->Volume
                               );
     if (EFI_ERROR (Status)) {
-      goto ErrorReadVolFileStructure;
+      goto Error_Read_Vol_File_Structure;
     }
 
     Status = GetFileSetDescriptors (
@@ -93,7 +93,7 @@ UdfOpenVolume (
 			      &PrivFsData->Volume
                               );
     if (EFI_ERROR (Status)) {
-      goto ErrorGetFsds;
+      goto Error_Get_Fsds;
     }
   }
 
@@ -109,7 +109,7 @@ UdfOpenVolume (
                       &PrivFsData->Root.FileEntry
                       );
   if (EFI_ERROR (Status)) {
-    goto ErrorFindFe;
+    goto Error_Find_Fe;
   }
 
   Parent.FileEntry = PrivFsData->Root.FileEntry;
@@ -126,7 +126,7 @@ UdfOpenVolume (
 		 &File
                  );
   if (EFI_ERROR (Status)) {
-    goto ErrorFindFile;
+    goto Error_Find_File;
   }
 
   PrivFsData->Root.FileIdentifierDesc = File.FileIdentifierDesc;
@@ -134,7 +134,7 @@ UdfOpenVolume (
   PrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
   if (!PrivFileData) {
     Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocPrivFileData;
+    goto Error_Alloc_Priv_File_Data;
   }
 
   PrivFileData->Root             = &PrivFsData->Root;
@@ -156,18 +156,18 @@ UdfOpenVolume (
 
   return Status;
 
-ErrorAllocPrivFileData:
-ErrorFindFile:
+Error_Alloc_Priv_File_Data:
+Error_Find_File:
   FreePool (PrivFileData->File.FileEntry);
 
-ErrorFindFe:
-ErrorGetFsds:
+Error_Find_Fe:
+Error_Get_Fsds:
   CleanUpVolumeInformation (&PrivFsData->Volume);
 
-ErrorReadVolFileStructure:
+Error_Read_Vol_File_Structure:
   FreePool ((VOID *)PrivFileData);
 
-ErrorInvalidParams:
+Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);
 
   return Status;
@@ -216,12 +216,12 @@ UdfOpen (
 
   if (!This || !NewHandle || !FileName) {
     Status = EFI_INVALID_PARAMETER;
-    goto ErrorInvalidParams;
+    goto Error_Invalid_Params;
   }
 
   if (OpenMode != EFI_FILE_MODE_READ) {
     Status = EFI_WRITE_PROTECTED;
-    goto ErrorInvalidParams;
+    goto Error_Invalid_Params;
   }
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
@@ -242,7 +242,7 @@ UdfOpen (
   MangleFileName (FilePath);
   if (!FilePath[0]) {
     Status = EFI_NOT_FOUND;
-    goto ErrorBadFileName;
+    goto Error_Bad_FileName;
   }
 
   Status = FindFile (
@@ -256,13 +256,13 @@ UdfOpen (
 		 &File
                  );
   if (EFI_ERROR (Status)) {
-    goto ErrorFindFile;
+    goto Error_Find_File;
   }
 
   NewPrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
   if (!NewPrivFileData) {
     Status = EFI_OUT_OF_RESOURCES;
-    goto ErrorAllocNewPrivFileData;
+    goto Error_Alloc_New_Priv_File_Data;
   }
 
   CopyMem (
@@ -294,7 +294,7 @@ UdfOpen (
 		    &NewPrivFileData->FileSize
                     );
   if (EFI_ERROR (Status)) {
-    goto ErrorGetFileSize;
+    goto Error_Get_File_Size;
   }
 
   NewPrivFileData->FilePosition = 0;
@@ -311,15 +311,15 @@ UdfOpen (
 
   return Status;
 
-ErrorGetFileSize:
+Error_Get_File_Size:
   FreePool ((VOID *)NewPrivFileData);
 
-ErrorAllocNewPrivFileData:
+Error_Alloc_New_Priv_File_Data:
   CleanUpFileInformation (&File);
 
-ErrorFindFile:
-ErrorBadFileName:
-ErrorInvalidParams:
+Error_Find_File:
+Error_Bad_FileName:
+Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);
 
   return Status;
@@ -366,7 +366,7 @@ UdfRead (
 
   if (!This || !BufferSize || (*BufferSize && !Buffer)) {
     Status = EFI_INVALID_PARAMETER;
-    goto ErrorInvalidParams;
+    goto Error_Invalid_Params;
   }
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
@@ -390,13 +390,13 @@ UdfRead (
       // File's position is beyond the EOF
       //
       Status = EFI_DEVICE_ERROR;
-      goto ErrorFileBeyondTheEof;
+      goto Error_File_Beyond_The_Eof;
     }
 
     if (PrivFileData->FilePosition == PrivFileData->FileSize) {
       *BufferSize = 0;
       Status = EFI_SUCCESS;
-      goto DoneFileAtEof;
+      goto Done_File_At_Eof;
     }
 
     Status = ReadFileData (
@@ -413,7 +413,7 @@ UdfRead (
     if (!ReadDirInfo->FidOffset && PrivFileData->FilePosition) {
       Status = EFI_DEVICE_ERROR;
       *BufferSize = 0;
-      goto DoneWithNoMoreDirEnts;
+      goto Done_With_No_More_Dir_Ents;
     }
 
     for (;;) {
@@ -434,7 +434,7 @@ UdfRead (
 	  Status = EFI_SUCCESS;
 	}
 
-	goto DoneReadDirEnt;
+	goto Done_ReadDir_Ent;
       }
 
       if (!IS_FID_PARENT_FILE (NewFileIdentifierDesc)) {
@@ -452,7 +452,7 @@ UdfRead (
 			&NewFileEntryData
                         );
     if (EFI_ERROR (Status)) {
-      goto ErrorFindFe;
+      goto Error_Find_Fe;
     }
 
     if (IS_FE_SYMLINK (NewFileEntryData)) {
@@ -465,7 +465,7 @@ UdfRead (
 			  &FoundFile
                           );
       if (EFI_ERROR (Status)) {
-	goto ErrorFindFileFromSymlink;
+	goto Error_Find_File_From_Symlink;
       }
 
       FreePool ((VOID *)NewFileEntryData);
@@ -474,7 +474,7 @@ UdfRead (
       Status = GetFileNameFromFid (NewFileIdentifierDesc, FileName);
       if (EFI_ERROR (Status)) {
 	FreePool ((VOID *)FoundFile.FileIdentifierDesc);
-	goto ErrorGetFileName;
+	goto Error_Get_FileName;
       }
 
       FreePool ((VOID *)NewFileIdentifierDesc);
@@ -485,7 +485,7 @@ UdfRead (
 
       Status = GetFileNameFromFid (FoundFile.FileIdentifierDesc, FileName);
       if (EFI_ERROR (Status)) {
-	goto ErrorGetFileName;
+	goto Error_Get_FileName;
       }
     }
 
@@ -497,7 +497,7 @@ UdfRead (
 		      &FileSize
                       );
     if (EFI_ERROR (Status)) {
-      goto ErrorGetFileSize;
+      goto Error_Get_File_Size;
     }
 
     Status = SetFileInfo (
@@ -508,7 +508,7 @@ UdfRead (
 		     Buffer
                      );
     if (EFI_ERROR (Status)) {
-      goto ErrorSetFileInfo;
+      goto Error_Set_File_Info;
     }
 
     PrivFileData->FilePosition++;
@@ -517,24 +517,24 @@ UdfRead (
     Status = EFI_DEVICE_ERROR;
   }
 
-ErrorSetFileInfo:
-ErrorGetFileSize:
-ErrorGetFileName:
-ErrorFindFileFromSymlink:
+Error_Set_File_Info:
+Error_Get_File_Size:
+Error_Get_FileName:
+Error_Find_File_From_Symlink:
   if (NewFileEntryData) {
     FreePool (NewFileEntryData);
   }
 
-ErrorFindFe:
+Error_Find_Fe:
   if (NewFileIdentifierDesc) {
     FreePool ((VOID *)NewFileIdentifierDesc);
   }
 
-DoneReadDirEnt:
-DoneWithNoMoreDirEnts:
-DoneFileAtEof:
-ErrorFileBeyondTheEof:
-ErrorInvalidParams:
+Done_ReadDir_Ent:
+Done_With_No_More_Dir_Ents:
+Done_File_At_Eof:
+Error_File_Beyond_The_Eof:
+Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);
 
   return Status;
