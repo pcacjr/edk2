@@ -485,12 +485,16 @@ ResolveSymlink (
     PathCompLength = PathComp->LengthOfComponentIdentifier;
 
     switch (PathComp->ComponentType) {
+      case 1:
+      case 2:
+	goto Next_Path_Component;
       case 3:
-	FileName[0] = L'.';
-	FileName[1] = L'.';
-	FileName[2] = L'\0';
+	CopyMem ((VOID *)FileName, L"..", 6);
 	break;
-
+      case 4:
+	DuplicateFe (BlockIo, PreviousFile.FileEntry, &File->FileEntry);
+	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
+	goto Next_Path_Component;
       case 5:
 	CompressionId = PathComp->ComponentIdentifier[0];
 	if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
@@ -516,18 +520,6 @@ ResolveSymlink (
 
 	*C = L'\0';
 	break;
-
-      case 4:
-	DuplicateFe (BlockIo, PreviousFile.FileEntry, &File->FileEntry);
-	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
-	goto NextPathComponent;
-
-      default:
-	Print (
-	  L"Warning: Unhandled Path Component Type %d\n",
-	  PathComp->ComponentType
-	  );
-	goto NextPathComponent;
     }
 
     Status = InternalFindFile (
@@ -540,10 +532,10 @@ ResolveSymlink (
 			   File
                            );
     if (EFI_ERROR (Status)) {
-      goto ErrorFindFile;
+      goto Error_Find_File;
     }
 
-NextPathComponent:
+Next_Path_Component:
     Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
     if (Data >= EndData) {
       break;
@@ -565,7 +557,7 @@ NextPathComponent:
 
   return EFI_SUCCESS;
 
-ErrorFindFile:
+Error_Find_File:
   if (CompareMem (
 	(VOID *)&PreviousFile,
 	(VOID *)Parent,
@@ -609,18 +601,18 @@ FindFileEntry (
 			  *FileEntry
                           );
   if (EFI_ERROR (Status)) {
-    goto ErrorReadDiskBlk;
+    goto Error_Read_Disk_Blk;
   }
 
   if (!IS_FE (*FileEntry) && !IS_EFE (*FileEntry)) {
     Status = EFI_VOLUME_CORRUPTED;
-    goto ErrorInvalidFe;
+    goto Error_Invalid_Fe;
   }
 
   return EFI_SUCCESS;
 
-ErrorInvalidFe:
-ErrorReadDiskBlk:
+Error_Invalid_Fe:
+Error_Read_Disk_Blk:
   FreePool (*FileEntry);
 
   return Status;
@@ -1281,7 +1273,6 @@ ReadFile (
       ReadFileInfo->ReadLength = 0;
       ReadFileInfo->FileData = NULL;
       break;
-
     case READ_FILE_SEEK_AND_READ:
       Length = ReadFileInfo->FileSize - ReadFileInfo->FilePosition;
       if (ReadFileInfo->FileDataSize > Length) {
@@ -1325,7 +1316,6 @@ ReadFile (
       }
 
       break;
-
     case LONG_ADS_SEQUENCE:
     case SHORT_ADS_SEQUENCE:
       GetAdsInformation (FileEntryData, &Data, &Length);
@@ -1382,7 +1372,6 @@ ReadFile (
 	  case READ_FILE_GET_FILESIZE:
 	    ReadFileInfo->ReadLength += ExtentLength;
 	    break;
-
 	  case READ_FILE_ALLOCATE_AND_READ:
 	    Status = GrowUpBufferToNextAd (
                                      RecordingFlags,
@@ -1408,7 +1397,6 @@ ReadFile (
 
 	    ReadFileInfo->ReadLength += ExtentLength;
 	    break;
-
 	  case READ_FILE_SEEK_AND_READ:
 	    if (FinishedSeeking) {
 	      Offset = 0;
@@ -1467,7 +1455,6 @@ Skip_Ad:
       }
 
       break;
-
     case EXTENDED_ADS_SEQUENCE:
       break;
   }
