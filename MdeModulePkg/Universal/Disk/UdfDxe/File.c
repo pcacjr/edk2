@@ -153,7 +153,7 @@ UdfOpenVolume (
 
   gBS->RestoreTPL (OldTpl);
 
-  return Status;
+  return EFI_SUCCESS;
 
 Error_Alloc_Priv_File_Data:
 Error_Find_File:

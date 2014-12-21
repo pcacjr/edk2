@@ -129,6 +129,7 @@ StartMainVolumeDescriptorSequence (
 
   Volume->LogicalVolDescsNo  = 0;
   Volume->PartitionDescsNo   = 0;
+
   while (StartingLsn <= EndingLsn) {
     Status = DiskIo->ReadDisk (
                          DiskIo,
@@ -595,7 +596,7 @@ FindFileEntry (
   Lsn        = GetLongAdLsn (Volume, Icb);
   BlockSize  = BlockIo->Media->BlockSize;
 
-  *FileEntry = AllocateZeroPool (BlockSize);
+  *FileEntry = AllocateZeroPool (1 << UDF_LOGICAL_SECTOR_SHIFT);
   if (!*FileEntry) {
     return EFI_OUT_OF_RESOURCES;
   }
@@ -604,7 +605,7 @@ FindFileEntry (
                           DiskIo,
 			  BlockIo->Media->MediaId,
 			  MultU64x32 (Lsn, BlockSize),
-			  BlockSize,
+			  1 << UDF_LOGICAL_SECTOR_SHIFT,
 			  *FileEntry
                           );
   if (EFI_ERROR (Status)) {
@@ -643,19 +644,10 @@ DuplicateFid (
   OUT  UDF_FILE_IDENTIFIER_DESCRIPTOR  **NewFileIdentifierDesc
   )
 {
-  UINT64 FidLength;
-
-  FidLength = GetFidDescriptorLength (FileIdentifierDesc);
-
-  *NewFileIdentifierDesc =
-    (UDF_FILE_IDENTIFIER_DESCRIPTOR *)AllocateZeroPool (FidLength);
-  ASSERT (*NewFileIdentifierDesc);
-
-  CopyMem (
-    (VOID *)*NewFileIdentifierDesc,
-    (VOID *)FileIdentifierDesc,
-    FidLength
-    );
+  *NewFileIdentifierDesc = AllocateCopyPool (
+                                   GetFidDescriptorLength (FileIdentifierDesc),
+				   FileIdentifierDesc
+                                   );
 }
 
 VOID
@@ -665,14 +657,7 @@ DuplicateFe (
   OUT  VOID                   **NewFileEntry
   )
 {
-  UINT32 BlockSize;
-
-  BlockSize = BlockIo->Media->BlockSize;
-
-  *NewFileEntry = AllocateZeroPool (BlockSize);
-  ASSERT (*NewFileEntry);
-
-  CopyMem (*NewFileEntry, FileEntry, BlockSize);
+  *NewFileEntry = AllocateCopyPool (1 << UDF_LOGICAL_SECTOR_SHIFT, FileEntry);
 }
 
 EFI_STATUS
