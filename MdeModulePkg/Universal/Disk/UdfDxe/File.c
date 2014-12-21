@@ -36,7 +36,6 @@ EFI_FILE_PROTOCOL gUdfFileIoOps = {
 #define _PARENT_FILE(_PrivData) \
   ((_PrivData)->IsRootDirectory ? (_PrivData)->Root : &(_PrivData)->File)
 #define _FILE(_PrivData) _PARENT_FILE(_PrivData)
-#define _ICB(_PrivData) &_FILE(_PrivData)->FileIdentifierDesc->Icb
 
 /**
   Open the root directory on a volume.
@@ -137,10 +136,10 @@ UdfOpenVolume (
     goto Error_Alloc_Priv_File_Data;
   }
 
-  PrivFileData->Root             = &PrivFsData->Root;
-  PrivFileData->IsRootDirectory  = TRUE;
   PrivFileData->Signature        = PRIVATE_UDF_FILE_DATA_SIGNATURE;
   PrivFileData->SimpleFs         = This;
+  PrivFileData->Root             = &PrivFsData->Root;
+  PrivFileData->IsRootDirectory  = TRUE;
 
   CopyMem (
     (VOID *)&PrivFileData->FileIo,
@@ -203,14 +202,14 @@ UdfOpen (
   IN   UINT64             Attributes
   )
 {
-  EFI_TPL                         OldTpl;
-  EFI_STATUS                      Status;
-  PRIVATE_UDF_FILE_DATA           *PrivFileData;
-  PRIVATE_UDF_SIMPLE_FS_DATA      *PrivFsData;
-  CHAR16                          FilePath[UDF_PATH_LENGTH] = { 0 };
-  UDF_FILE_INFO                   File;
-  PRIVATE_UDF_FILE_DATA           *NewPrivFileData;
-  CHAR16                          *TempFileName;
+  EFI_TPL                     OldTpl;
+  EFI_STATUS                  Status;
+  PRIVATE_UDF_FILE_DATA       *PrivFileData;
+  PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
+  CHAR16                      FilePath[UDF_PATH_LENGTH] = { 0 };
+  UDF_FILE_INFO               File;
+  PRIVATE_UDF_FILE_DATA       *NewPrivFileData;
+  CHAR16                      *TempFileName;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -252,7 +251,7 @@ UdfOpen (
 		 FilePath,
 		 _ROOT_FILE (PrivFileData),
 		 _PARENT_FILE (PrivFileData),
-		 _ICB (PrivFileData),
+		 &_PARENT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
 		 &File
                  );
   if (EFI_ERROR (Status)) {
@@ -396,7 +395,7 @@ UdfRead (
     if (PrivFileData->FilePosition == PrivFileData->FileSize) {
       *BufferSize = 0;
       Status = EFI_SUCCESS;
-      goto Done_File_At_Eof;
+      goto Done;
     }
 
     Status = ReadFileData (
@@ -413,7 +412,7 @@ UdfRead (
     if (!ReadDirInfo->FidOffset && PrivFileData->FilePosition) {
       Status = EFI_DEVICE_ERROR;
       *BufferSize = 0;
-      goto Done_With_No_More_Dir_Ents;
+      goto Done;
     }
 
     for (;;) {
@@ -434,7 +433,7 @@ UdfRead (
 	  Status = EFI_SUCCESS;
 	}
 
-	goto Done_ReadDir_Ent;
+	goto Done;
       }
 
       if (!IS_FID_PARENT_FILE (NewFileIdentifierDesc)) {
@@ -465,7 +464,7 @@ UdfRead (
 			  &FoundFile
                           );
       if (EFI_ERROR (Status)) {
-	goto Error_Find_File_From_Symlink;
+	goto Error_Resolve_Symlink;
       }
 
       FreePool ((VOID *)NewFileEntryData);
@@ -520,7 +519,7 @@ UdfRead (
 Error_Set_File_Info:
 Error_Get_File_Size:
 Error_Get_FileName:
-Error_Find_File_From_Symlink:
+Error_Resolve_Symlink:
   if (NewFileEntryData) {
     FreePool (NewFileEntryData);
   }
@@ -530,9 +529,7 @@ Error_Find_Fe:
     FreePool ((VOID *)NewFileIdentifierDesc);
   }
 
-Done_ReadDir_Ent:
-Done_With_No_More_Dir_Ents:
-Done_File_At_Eof:
+Done:
 Error_File_Beyond_The_Eof:
 Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);

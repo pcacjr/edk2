@@ -631,14 +631,10 @@ GetFidDescriptorLength (
   )
 {
   return (UINT64)(
-    38 + // Offset of Implementation Use field
-    FileIdentifierDesc->LengthOfFileIdentifier +
-    FileIdentifierDesc->LengthOfImplementationUse +
-    (4 * ((FileIdentifierDesc->LengthOfFileIdentifier +
-	   FileIdentifierDesc->LengthOfImplementationUse + 38 + 3) / 4) -
-     (FileIdentifierDesc->LengthOfFileIdentifier +
-      FileIdentifierDesc->LengthOfImplementationUse + 38))
-    );
+             (INTN)((OFFSET_OF (UDF_FILE_IDENTIFIER_DESCRIPTOR, Data[0]) + 3 +
+		     FileIdentifierDesc->LengthOfFileIdentifier +
+		     FileIdentifierDesc->LengthOfImplementationUse) >> 2) << 2
+             );
 }
 
 VOID

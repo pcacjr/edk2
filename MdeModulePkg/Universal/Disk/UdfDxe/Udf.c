@@ -252,9 +252,6 @@ UdfDriverBindingStart (
 				     NULL,
 				     NULL
                                      );
-  if (EFI_ERROR (Status)) {
-    goto Exit;
-  }
 
 Exit:
   gBS->RestoreTPL (OldTpl);
