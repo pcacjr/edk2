@@ -152,6 +152,9 @@ typedef enum {
 #define IS_VALID_COMPRESSION_ID(_CompId) \
   ((BOOLEAN)((_CompId) == 8 || (_CompId) == 16))
 
+#define LV_BLOCK_SIZE(_Vol, _LvNum) \
+  (_Vol)->LogicalVolDescs[(_LvNum)]->LogicalBlockSize
+
 #pragma pack(1)
 
 #define UDF_STANDARD_IDENTIFIER_LENGTH   5
@@ -785,9 +788,10 @@ DuplicateFid (
 
 VOID
 DuplicateFe (
-  IN EFI_BLOCK_IO_PROTOCOL   *BlockIo,
-  IN VOID                    *FileEntry,
-  OUT VOID                   **NewFileEntry
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   VOID                   *FileEntry,
+  OUT  VOID                   **NewFileEntry
   );
 
 EFI_STATUS

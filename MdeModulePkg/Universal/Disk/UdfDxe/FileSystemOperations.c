@@ -290,7 +290,6 @@ FindFileSetDescriptor (
 {
   EFI_STATUS                     Status;
   UINT64                         Lsn;
-  UINT32                         BlockSize;
   UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc;
 
   LogicalVolDesc  = Volume->LogicalVolDescs[LogicalVolDescNo];
@@ -298,12 +297,11 @@ FindFileSetDescriptor (
                               Volume,
                               &LogicalVolDesc->LogicalVolumeContentsUse
                               );
-  BlockSize       = BlockIo->Media->BlockSize;
 
   Status = DiskIo->ReadDisk (
                        DiskIo,
                        BlockIo->Media->MediaId,
-                       MultU64x32 (Lsn, BlockSize),
+                       MultU64x32 (Lsn, LogicalVolDesc->LogicalBlockSize),
                        sizeof (UDF_FILE_SET_DESCRIPTOR),
                        (VOID *)FileSetDesc
                        );
@@ -492,7 +490,7 @@ ResolveSymlink (
 	CopyMem ((VOID *)FileName, L"..", 6);
 	break;
       case 4:
-	DuplicateFe (BlockIo, PreviousFile.FileEntry, &File->FileEntry);
+	DuplicateFe (BlockIo, Volume, PreviousFile.FileEntry, &File->FileEntry);
 	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
 	goto Next_Path_Component;
       case 5:
@@ -583,10 +581,10 @@ FindFileEntry (
 {
   EFI_STATUS  Status;
   UINT64      Lsn;
-  UINT32      BlockSize;
+  UINT32      LogicalBlockSize;
 
-  Lsn        = GetLongAdLsn (Volume, Icb);
-  BlockSize  = BlockIo->Media->BlockSize;
+  Lsn               = GetLongAdLsn (Volume, Icb);
+  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, 0);
 
   *FileEntry = AllocateZeroPool (1 << UDF_LOGICAL_SECTOR_SHIFT);
   if (!*FileEntry) {
@@ -596,7 +594,7 @@ FindFileEntry (
   Status = DiskIo->ReadDisk (
                           DiskIo,
 			  BlockIo->Media->MediaId,
-			  MultU64x32 (Lsn, BlockSize),
+			  MultU64x32 (Lsn, LogicalBlockSize),
 			  1 << UDF_LOGICAL_SECTOR_SHIFT,
 			  *FileEntry
                           );
@@ -645,6 +643,7 @@ DuplicateFid (
 VOID
 DuplicateFe (
   IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   UDF_VOLUME_INFO        *Volume,
   IN   VOID                   *FileEntry,
   OUT  VOID                   **NewFileEntry
   )
@@ -718,7 +717,7 @@ InternalFindFile (
   }
 
   if (!StrCmp (FileName, L".")) {
-    DuplicateFe (BlockIo, Parent->FileEntry, &File->FileEntry);
+    DuplicateFe (BlockIo, Volume, Parent->FileEntry, &File->FileEntry);
     DuplicateFid (Parent->FileIdentifierDesc, &File->FileIdentifierDesc);
 
     return EFI_SUCCESS;
@@ -800,7 +799,7 @@ Skip_Fid:
       if (CompareMem (
 	    (VOID *)Parent->FileEntry,
 	    (VOID *)CompareFileEntry,
-	    BlockIo->Media->BlockSize
+	    1 << UDF_LOGICAL_SECTOR_SHIFT
 	    )
 	 ) {
 	File->FileEntry = CompareFileEntry;
@@ -860,7 +859,7 @@ FindFile (
 			       File
                                );
       } else {
-	DuplicateFe (BlockIo, Root->FileEntry, &File->FileEntry);
+	DuplicateFe (BlockIo, Volume, Root->FileEntry, &File->FileEntry);
 	DuplicateFid (Root->FileIdentifierDesc, &File->FileIdentifierDesc);
 	Status = EFI_SUCCESS;
       }
@@ -1120,7 +1119,7 @@ GetAedAdsOffset (
   UINT32                            ExtentLength;
   UINT64                            Lsn;
   VOID                              *Data;
-  UINT32                            BlockSize;
+  UINT32                            LogicalBlockSize;
   UDF_ALLOCATION_EXTENT_DESCRIPTOR  *AllocExtDesc;
 
   ExtentLength  = GET_EXTENT_LENGTH (RecordingFlags, Ad);
@@ -1136,12 +1135,12 @@ GetAedAdsOffset (
     return EFI_OUT_OF_RESOURCES;
   }
 
-  BlockSize = BlockIo->Media->BlockSize;
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, 0);
 
   Status = DiskIo->ReadDisk (
                           DiskIo,
 			  BlockIo->Media->MediaId,
-			  MultU64x32 (Lsn, BlockSize),
+			  MultU64x32 (Lsn, LogicalBlockSize),
 			  ExtentLength,
                           Data
                           );
@@ -1155,7 +1154,7 @@ GetAedAdsOffset (
     goto Exit;
   }
 
-  *Offset = (UINT64)(MultU64x32 (Lsn, BlockSize) +
+  *Offset = (UINT64)(MultU64x32 (Lsn, LogicalBlockSize) +
 		     sizeof (UDF_ALLOCATION_EXTENT_DESCRIPTOR));
   *Length = AllocExtDesc->LengthOfAllocationDescriptors;
 
@@ -1248,7 +1247,7 @@ ReadFile (
   )
 {
   EFI_STATUS              Status;
-  UINT32                  BlockSize;
+  UINT32                  LogicalBlockSize;
   VOID                    *Data;
   UINT64                  Length;
   VOID                    *Ad;
@@ -1264,8 +1263,8 @@ ReadFile (
   UINT32                  ExtentLength;
   UDF_FE_RECORDING_FLAGS  RecordingFlags;
 
-  BlockSize = BlockIo->Media->BlockSize;
-  DoFreeAed = FALSE;
+  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, 0);
+  DoFreeAed         = FALSE;
 
   switch (ReadFileInfo->Flags) {
     case READ_FILE_GET_FILESIZE:
@@ -1386,7 +1385,7 @@ ReadFile (
 	    Status = DiskIo->ReadDisk (
                                     DiskIo,
 				    BlockIo->Media->MediaId,
-				    MultU64x32 (Lsn, BlockSize),
+				    MultU64x32 (Lsn, LogicalBlockSize),
 				    ExtentLength,
 				    (VOID *)((UINT8 *)ReadFileInfo->FileData +
 					     ReadFileInfo->ReadLength)
@@ -1429,7 +1428,7 @@ Skip_File_Seek:
 	    Status = DiskIo->ReadDisk (
                                     DiskIo,
 				    BlockIo->Media->MediaId,
-				    Offset + MultU64x32 (Lsn, BlockSize),
+				    Offset + MultU64x32 (Lsn, LogicalBlockSize),
 				    DataLength,
 				    (VOID *)((UINT8 *)ReadFileInfo->FileData +
 					     DataOffset)
@@ -1666,7 +1665,7 @@ GetVolumeSize (
   OUT  UINT64                 *FreeSpaceSize
   )
 {
-  UINT32                        BlockSize;
+  UINT32                        LogicalBlockSize;
   UDF_EXTENT_AD                 ExtentAd;
   EFI_STATUS                    Status;
   UDF_LOGICAL_VOLUME_INTEGRITY  *LogicalVolInt;
@@ -1674,9 +1673,9 @@ GetVolumeSize (
   UINTN                         Length;
   UINT32                        LsnsNo;
 
-  BlockSize       = BlockIo->Media->BlockSize;
-  *VolumeSize     = 0;
-  *FreeSpaceSize  = 0;
+  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, 0);
+  *VolumeSize       = 0;
+  *FreeSpaceSize    = 0;
 
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     CopyMem (
@@ -1699,7 +1698,7 @@ Read_Next_Sequence:
     Status = DiskIo->ReadDisk (
                          DiskIo,
 			 BlockIo->Media->MediaId,
-			 MultU64x32 (ExtentAd.ExtentLocation, BlockSize),
+			 MultU64x32 (ExtentAd.ExtentLocation, LogicalBlockSize),
 			 ExtentAd.ExtentLength,
 			 (VOID *)LogicalVolInt
                          );
@@ -1723,7 +1722,7 @@ Read_Next_Sequence:
 	continue;
       }
 
-      *FreeSpaceSize += MultU64x32 ((UINT64)LsnsNo, BlockSize);
+      *FreeSpaceSize += MultU64x32 ((UINT64)LsnsNo, LogicalBlockSize);
     }
 
     Length = LogicalVolInt->NumberOfPartitions * sizeof (UINT32) * 2;
@@ -1736,7 +1735,7 @@ Read_Next_Sequence:
 	continue;
       }
 
-      *VolumeSize += MultU64x32 ((UINT64)LsnsNo, BlockSize);
+      *VolumeSize += MultU64x32 ((UINT64)LsnsNo, LogicalBlockSize);
     }
 
     CopyMem (
