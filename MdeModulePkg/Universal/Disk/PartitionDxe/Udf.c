@@ -21,16 +21,21 @@ EFI_GUID gUdfVolumeSignatureGuid = {
   { 0x89, 0x56, 0x73, 0xCD, 0xA3, 0x26, 0xCD, 0x0A }
 };
 
+//
+// The UDF/ECMA-167 file system driver only supports UDF revision 2.00 or
+// higher.
+//
+// Note the "NSR03" identifier.
+//
 UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[NR_STANDARD_IDENTIFIERS] = {
   { { 'B', 'E', 'A', '0', '1' } },
-  { { 'N', 'S', 'R', '0', '2' } },
   { { 'N', 'S', 'R', '0', '3' } },
   { { 'T', 'E', 'A', '0', '1' } },
 };
 
 typedef struct {
-  VENDOR_DEVICE_PATH         DevicePath;
-  EFI_DEVICE_PATH_PROTOCOL   End;
+  VENDOR_DEVICE_PATH        DevicePath;
+  EFI_DEVICE_PATH_PROTOCOL  End;
 } UDF_DEVICE_PATH;
 
 //
@@ -62,65 +67,73 @@ FindAnchorVolumeDescriptorPointer (
   UINT32      BlockSize;
   EFI_LBA     EndLBA;
 
-  BlockSize = BlockIo->Media->BlockSize;
-  EndLBA = BlockIo->Media->LastBlock;
+  BlockSize  = BlockIo->Media->BlockSize;
+  EndLBA     = BlockIo->Media->LastBlock;
 
+  //
+  // Look for an AVDP at LBA 256.
+  //
   Status = DiskIo->ReadDisk (
-                         DiskIo,
-                         BlockIo->Media->MediaId,
-		         MultU64x32 (0x100ULL, BlockSize),
-                         sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
-                         (VOID *) AnchorPoint
-                         );
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+		       MultU64x32 (0x100ULL, BlockSize),
+                       sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
+                       (VOID *)AnchorPoint
+                       );
   if (EFI_ERROR (Status)) {
-    goto Exit;
-  }
-
-  Status = EFI_VOLUME_CORRUPTED;
-  if (IS_AVDP (AnchorPoint)) {
-    Status = EFI_SUCCESS;
-    goto Exit;
-  }
-
-  Status = DiskIo->ReadDisk (
-                         DiskIo,
-                         BlockIo->Media->MediaId,
-		         MultU64x32 (EndLBA - 0x100ULL, BlockSize),
-                         sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
-                         (VOID *) AnchorPoint
-                         );
-  if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
   if (IS_AVDP (AnchorPoint)) {
-    Status = EFI_SUCCESS;
-    goto Exit;
+    return EFI_SUCCESS;
   }
 
+  //
+  // Look for an AVDP at last LBA - 256.
+  //
   Status = DiskIo->ReadDisk (
-                         DiskIo,
-                         BlockIo->Media->MediaId,
-		         MultU64x32 (EndLBA, BlockSize),
-                         sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
-                         (VOID *) AnchorPoint
-                         );
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+		       MultU64x32 (EndLBA - 0x100ULL, BlockSize),
+                       sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
+                       (VOID *)AnchorPoint
+                       );
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
   if (IS_AVDP (AnchorPoint)) {
-    Status = EFI_SUCCESS;
+    return EFI_SUCCESS;
   }
 
-Exit:
-  return Status;
+  //
+  // Look for an AVDP at last LBA.
+  //
+  Status = DiskIo->ReadDisk (
+                       DiskIo,
+                       BlockIo->Media->MediaId,
+		       MultU64x32 (EndLBA, BlockSize),
+                       sizeof (UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER),
+                       (VOID *)AnchorPoint
+                       );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  if (IS_AVDP (AnchorPoint)) {
+    return EFI_SUCCESS;
+  }
+
+  //
+  // There is no AVDP on this medium.
+  //
+  return EFI_VOLUME_CORRUPTED;
 }
 
 EFI_STATUS
 SupportUdfFileSystem (
-  IN  EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN  EFI_DISK_IO_PROTOCOL   *DiskIo
+  IN EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL   *DiskIo
   )
 {
   EFI_STATUS                            Status;
@@ -130,27 +143,29 @@ SupportUdfFileSystem (
   UDF_VOLUME_DESCRIPTOR                 TerminatingVolDescriptor;
   UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  AnchorPoint;
 
-  ZeroMem ((VOID *) &TerminatingVolDescriptor, sizeof (UDF_VOLUME_DESCRIPTOR));
+  ZeroMem ((VOID *)&TerminatingVolDescriptor, sizeof (UDF_VOLUME_DESCRIPTOR));
+
   //
-  // Start Volume Recognition Sequence
+  // Start Volume Recognition Sequence.
   //
-  EndDiskOffset = BlockIo->Media->LastBlock << UDF_LOGICAL_SECTOR_SHIFT;
+  EndDiskOffset = BlockIo->Media->LastBlock * BlockIo->Media->BlockSize;
+
   for (Offset = UDF_VRS_START_OFFSET; Offset < EndDiskOffset;
-       Offset += 1 << UDF_LOGICAL_SECTOR_SHIFT) {
+       Offset += UDF_LOGICAL_SECTOR_SIZE) {
     Status = DiskIo->ReadDisk (
                            DiskIo,
                            BlockIo->Media->MediaId,
                            Offset,
                            sizeof (UDF_VOLUME_DESCRIPTOR),
-                           (VOID *) &VolDescriptor
+                           (VOID *)&VolDescriptor
                            );
     if (EFI_ERROR (Status)) {
-      goto Exit;
+      return Status;
     }
 
     if (!CompareMem (
-	  (VOID *) &VolDescriptor.StandardIdentifier,
-	  (VOID *) &gUdfStandardIdentifiers[BEA_IDENTIFIER],
+	  (VOID *)&VolDescriptor.StandardIdentifier,
+	  (VOID *)&gUdfStandardIdentifiers[BEA_IDENTIFIER],
 	  UDF_STANDARD_IDENTIFIER_LENGTH
 	  )
       ) {
@@ -158,27 +173,26 @@ SupportUdfFileSystem (
     }
 
     if (CompareMem (
-	  (VOID *) &VolDescriptor.StandardIdentifier,
-	  (VOID *) UDF_CDROM_VOLUME_IDENTIFIER,
+	  (VOID *)&VolDescriptor.StandardIdentifier,
+	  (VOID *)UDF_CDROM_VOLUME_IDENTIFIER,
 	  UDF_STANDARD_IDENTIFIER_LENGTH
 	  ) ||
 	!CompareMem (
-	  (VOID *) &VolDescriptor,
-	  (VOID *) &TerminatingVolDescriptor,
+	  (VOID *)&VolDescriptor,
+	  (VOID *)&TerminatingVolDescriptor,
 	  sizeof (UDF_VOLUME_DESCRIPTOR)
 	  )
       ) {
-      Status = EFI_UNSUPPORTED;
-      goto Exit;
+      return EFI_UNSUPPORTED;
     }
   }
+
   //
-  // Look for either "NSR02" or "NSR03" in the Extended Area
+  // Look for "NSR03" identifier in the Extended Area
   //
-  Offset += 1 << UDF_LOGICAL_SECTOR_SHIFT;
+  Offset += UDF_LOGICAL_SECTOR_SIZE;
   if (Offset >= EndDiskOffset) {
-    Status = EFI_UNSUPPORTED;
-    goto Exit;
+    return EFI_UNSUPPORTED;
   }
 
   Status = DiskIo->ReadDisk (
@@ -186,34 +200,27 @@ SupportUdfFileSystem (
                        BlockIo->Media->MediaId,
                        Offset,
                        sizeof (UDF_VOLUME_DESCRIPTOR),
-                       (VOID *) &VolDescriptor
+                       (VOID *)&VolDescriptor
                        );
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
   if (CompareMem (
-	(VOID *) &VolDescriptor.StandardIdentifier,
-	(VOID *) &gUdfStandardIdentifiers[VSD_IDENTIFIER_0],
+	(VOID *)&VolDescriptor.StandardIdentifier,
+	(VOID *)&gUdfStandardIdentifiers[VSD_IDENTIFIER],
 	UDF_STANDARD_IDENTIFIER_LENGTH
 	)
-      &&
-      CompareMem (
-	(VOID *) &VolDescriptor.StandardIdentifier,
-	(VOID *) &gUdfStandardIdentifiers[VSD_IDENTIFIER_1],
-	UDF_STANDARD_IDENTIFIER_LENGTH
-        )
     ) {
-    Status = EFI_UNSUPPORTED;
-    goto Exit;
+    return EFI_UNSUPPORTED;
   }
+
   //
-  // Look for "TEA01" in the Extended Area
+  // Look for "TEA01" identifier in the Extended Area
   //
-  Offset += 1 << UDF_LOGICAL_SECTOR_SHIFT;
+  Offset += UDF_LOGICAL_SECTOR_SIZE;
   if (Offset >= EndDiskOffset) {
-    Status = EFI_UNSUPPORTED;
-    goto Exit;
+    return EFI_UNSUPPORTED;
   }
 
   Status = DiskIo->ReadDisk (
@@ -221,29 +228,27 @@ SupportUdfFileSystem (
                        BlockIo->Media->MediaId,
                        Offset,
                        sizeof (UDF_VOLUME_DESCRIPTOR),
-                       (VOID *) &VolDescriptor
+                       (VOID *)&VolDescriptor
                        );
   if (EFI_ERROR (Status)) {
-    goto Exit;
+    return Status;
   }
 
   if (CompareMem (
-	(VOID *) &VolDescriptor.StandardIdentifier,
-	(VOID *) &gUdfStandardIdentifiers[TEA_IDENTIFIER],
+	(VOID *)&VolDescriptor.StandardIdentifier,
+	(VOID *)&gUdfStandardIdentifiers[TEA_IDENTIFIER],
 	UDF_STANDARD_IDENTIFIER_LENGTH
 	)
     ) {
-    Status = EFI_UNSUPPORTED;
-    goto Exit;
+    return EFI_UNSUPPORTED;
   }
 
   Status = FindAnchorVolumeDescriptorPointer (BlockIo, DiskIo, &AnchorPoint);
   if (EFI_ERROR (Status)) {
-    Status = EFI_UNSUPPORTED;
+    return EFI_UNSUPPORTED;
   }
 
-Exit:
-  return Status;
+  return EFI_SUCCESS;
 }
 
 /**
@@ -296,7 +301,7 @@ PartitionInstallUdfChildHandles (
     DevicePathNode      = NextDevicePathNode (DevicePathNode);
   }
   if (LastDevicePathNode) {
-    VendorDevGuid = (EFI_GUID *) ((UINT8 *) LastDevicePathNode + OFFSET_OF (VENDOR_DEVICE_PATH, Guid));
+    VendorDevGuid = (EFI_GUID *)((UINT8 *)LastDevicePathNode + OFFSET_OF (VENDOR_DEVICE_PATH, Guid));
     if (DevicePathSubType (LastDevicePathNode) == MEDIA_VENDOR_DP &&
 	CompareGuid (VendorDevGuid, &UdfDevGuid)) {
       return EFI_NOT_FOUND;
@@ -311,7 +316,7 @@ PartitionInstallUdfChildHandles (
                                     BlockIo,
 				    BlockIo2,
 				    DevicePath,
-				    (EFI_DEVICE_PATH_PROTOCOL *) &gUdfDevicePath,
+				    (EFI_DEVICE_PATH_PROTOCOL *)&gUdfDevicePath,
 				    0,
 				    BlockIo->Media->LastBlock,
 				    BlockIo->Media->BlockSize,

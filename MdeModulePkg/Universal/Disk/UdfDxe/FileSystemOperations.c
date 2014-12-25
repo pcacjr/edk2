@@ -15,12 +15,11 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include "Udf.h"
 
 //
-// This driver *only* supports UDF revision 2.00 or highter due to restrict size
-// limitations on current flash memories.
+// This driver *only* supports UDF revision 2.00 or higher.
 //
 // Note the "NSR03" identifier.
 //
-UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[STANDARD_IDENTIFIERS_NO] = {
+UDF_STANDARD_IDENTIFIER gUdfStandardIdentifiers[NR_STANDARD_IDENTIFIERS] = {
   { { 'B', 'E', 'A', '0', '1' } },
   { { 'N', 'S', 'R', '0', '3' } },
   { { 'T', 'E', 'A', '0', '1' } },
@@ -2426,7 +2425,8 @@ SupportUdfFileSystem (
   //
   // Start Volume Recognition Sequence
   //
-  EndDiskOffset = BlockIo->Media->LastBlock << UDF_LOGICAL_SECTOR_SHIFT;
+  EndDiskOffset = BlockIo->Media->LastBlock * BlockIo->Media->BlockSize;
+
   for (Offset = UDF_VRS_START_OFFSET; Offset < EndDiskOffset;
        Offset += UDF_LOGICAL_SECTOR_SIZE) {
     Status = DiskIo->ReadDisk (
