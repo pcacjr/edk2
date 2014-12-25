@@ -1549,18 +1549,15 @@ SetFileInfo (
   OUT     VOID           *Buffer
   )
 {
-  EFI_STATUS               Status;
   UINTN                    FileInfoLength;
   EFI_FILE_INFO            *FileInfo;
   UDF_FILE_ENTRY           *FileEntry;
   UDF_EXTENDED_FILE_ENTRY  *ExtendedFileEntry;
 
-  Status = EFI_SUCCESS;
-
-  FileInfoLength =
-    (sizeof (EFI_FILE_INFO) + (FileName ?
-			       ((StrLen (FileName) + 1) * sizeof (CHAR16)) :
-			       sizeof (CHAR16)));
+  FileInfoLength = sizeof (EFI_FILE_INFO) + (FileName ?
+					     StrSize (FileName) :
+					     sizeof (CHAR16)
+                                            );
   if (*BufferSize < FileInfoLength) {
     *BufferSize = FileInfoLength;
     return EFI_BUFFER_TOO_SMALL;
