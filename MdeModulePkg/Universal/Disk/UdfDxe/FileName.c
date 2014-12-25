@@ -14,7 +14,6 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include "Udf.h"
 
-STATIC
 CHAR16 *
 TrimString (
   IN CHAR16    *String
@@ -36,7 +35,6 @@ TrimString (
   return String;
 }
 
-STATIC
 VOID
 ReplaceLeft (
   IN CHAR16         *Destination,
@@ -51,7 +49,6 @@ ReplaceLeft (
   }
 }
 
-STATIC
 CHAR16 *
 ExcludeTrailingBackslashes (
   IN CHAR16                    *String
