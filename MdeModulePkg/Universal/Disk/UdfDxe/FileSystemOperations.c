@@ -99,6 +99,7 @@ StartMainVolumeDescriptorSequence (
   UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc;
   UDF_PARTITION_DESCRIPTOR       *PartitionDesc;
   UINTN                          Index;
+  UINT32                         LogicalBlockSize;
 
   BlockSize    = BlockIo->Media->BlockSize;
   ExtentAd     = &AnchorPoint->MainVolumeDescriptorSequenceExtent;
@@ -185,9 +186,16 @@ StartMainVolumeDescriptorSequence (
     StartingLsn++;
   }
 
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+  if (LogicalBlockSize >= UDF_LOGICAL_SECTOR_SIZE) {
+    Volume->FileEntrySize = LogicalBlockSize;
+  } else {
+    Volume->FileEntrySize = UDF_LOGICAL_SECTOR_SIZE;
+  }
+
   FreePool (Buffer);
 
-  return Status;
+  return EFI_SUCCESS;
 
 Error_Alloc_Pd:
 Error_Alloc_Lvd:
@@ -586,7 +594,7 @@ FindFileEntry (
   Lsn               = GetLongAdLsn (Volume, Icb);
   LogicalBlockSize  = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
 
-  *FileEntry = AllocateZeroPool (1 << UDF_LOGICAL_SECTOR_SHIFT);
+  *FileEntry = AllocateZeroPool (Volume->FileEntrySize);
   if (!*FileEntry) {
     return EFI_OUT_OF_RESOURCES;
   }
@@ -595,7 +603,7 @@ FindFileEntry (
                           DiskIo,
 			  BlockIo->Media->MediaId,
 			  MultU64x32 (Lsn, LogicalBlockSize),
-			  1 << UDF_LOGICAL_SECTOR_SHIFT,
+			  Volume->FileEntrySize,
 			  *FileEntry
                           );
   if (EFI_ERROR (Status)) {
@@ -648,7 +656,7 @@ DuplicateFe (
   OUT  VOID                   **NewFileEntry
   )
 {
-  *NewFileEntry = AllocateCopyPool (1 << UDF_LOGICAL_SECTOR_SHIFT, FileEntry);
+  *NewFileEntry = AllocateCopyPool (Volume->FileEntrySize, FileEntry);
 }
 
 EFI_STATUS
@@ -799,7 +807,7 @@ Skip_Fid:
       if (CompareMem (
 	    (VOID *)Parent->FileEntry,
 	    (VOID *)CompareFileEntry,
-	    1 << UDF_LOGICAL_SECTOR_SHIFT
+	    Volume->FileEntrySize
 	    )
 	 ) {
 	File->FileEntry = CompareFileEntry;
@@ -1061,6 +1069,7 @@ GetFileSize (
   }
 
   *Size = ReadFileInfo.ReadLength;
+
   return EFI_SUCCESS;
 }
 
@@ -1455,6 +1464,8 @@ Skip_Ad:
 
       break;
     case EXTENDED_ADS_SEQUENCE:
+      // Not supported. Haven't got a volume with that yet.
+      Status = EFI_UNSUPPORTED;
       break;
   }
 
@@ -1775,7 +1786,7 @@ SupportUdfFileSystem (
   //
   EndDiskOffset = BlockIo->Media->LastBlock << UDF_LOGICAL_SECTOR_SHIFT;
   for (Offset = UDF_VRS_START_OFFSET; Offset < EndDiskOffset;
-       Offset += 1 << UDF_LOGICAL_SECTOR_SHIFT) {
+       Offset += UDF_LOGICAL_SECTOR_SIZE) {
     Status = DiskIo->ReadDisk (
                            DiskIo,
                            BlockIo->Media->MediaId,
@@ -1815,7 +1826,7 @@ SupportUdfFileSystem (
   //
   // Look for either "NSR02" or "NSR03" in the Extended Area
   //
-  Offset += 1 << UDF_LOGICAL_SECTOR_SHIFT;
+  Offset += UDF_LOGICAL_SECTOR_SIZE;
   if (Offset >= EndDiskOffset) {
     Status = EFI_UNSUPPORTED;
     goto Exit;
@@ -1845,7 +1856,7 @@ SupportUdfFileSystem (
   //
   // Look for "TEA01" in the Extended Area
   //
-  Offset += 1 << UDF_LOGICAL_SECTOR_SHIFT;
+  Offset += UDF_LOGICAL_SECTOR_SIZE;
   if (Offset >= EndDiskOffset) {
     Status = EFI_UNSUPPORTED;
     goto Exit;
