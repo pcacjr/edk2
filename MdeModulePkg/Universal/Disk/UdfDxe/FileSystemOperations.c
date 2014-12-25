@@ -584,7 +584,7 @@ FindFileEntry (
   UINT32      LogicalBlockSize;
 
   Lsn               = GetLongAdLsn (Volume, Icb);
-  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, 0);
+  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
 
   *FileEntry = AllocateZeroPool (1 << UDF_LOGICAL_SECTOR_SHIFT);
   if (!*FileEntry) {
@@ -1135,7 +1135,7 @@ GetAedAdsOffset (
     return EFI_OUT_OF_RESOURCES;
   }
 
-  LogicalBlockSize = LV_BLOCK_SIZE (Volume, 0);
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
 
   Status = DiskIo->ReadDisk (
                           DiskIo,
@@ -1263,7 +1263,7 @@ ReadFile (
   UINT32                  ExtentLength;
   UDF_FE_RECORDING_FLAGS  RecordingFlags;
 
-  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, 0);
+  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
   DoFreeAed         = FALSE;
 
   switch (ReadFileInfo->Flags) {
@@ -1665,17 +1665,16 @@ GetVolumeSize (
   OUT  UINT64                 *FreeSpaceSize
   )
 {
-  UINT32                        LogicalBlockSize;
   UDF_EXTENT_AD                 ExtentAd;
+  UINT32                        LogicalBlockSize;
   EFI_STATUS                    Status;
   UDF_LOGICAL_VOLUME_INTEGRITY  *LogicalVolInt;
   UINTN                         Index;
   UINTN                         Length;
   UINT32                        LsnsNo;
 
-  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, 0);
-  *VolumeSize       = 0;
-  *FreeSpaceSize    = 0;
+  *VolumeSize     = 0;
+  *FreeSpaceSize  = 0;
 
   for (Index = 0; Index < Volume->LogicalVolDescsNo; Index++) {
     CopyMem (
@@ -1686,6 +1685,8 @@ GetVolumeSize (
     if (!ExtentAd.ExtentLength) {
       continue;
     }
+
+    LogicalBlockSize = LV_BLOCK_SIZE (Volume, Index);
 
 Read_Next_Sequence:
     LogicalVolInt = (UDF_LOGICAL_VOLUME_INTEGRITY *)AllocatePool (
@@ -1725,7 +1726,7 @@ Read_Next_Sequence:
       *FreeSpaceSize += MultU64x32 ((UINT64)LsnsNo, LogicalBlockSize);
     }
 
-    Length = LogicalVolInt->NumberOfPartitions * sizeof (UINT32) * 2;
+    Length = (LogicalVolInt->NumberOfPartitions * sizeof (UINT32)) << 1;
     for (; Index < Length; Index += sizeof (UINT32)) {
       LsnsNo = *(UINT32 *)((UINT8 *)&LogicalVolInt->Data[0] + Index);
       if (LsnsNo == 0xFFFFFFFFUL) {

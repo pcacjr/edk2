@@ -42,9 +42,11 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 // 2048 bytes.
 //
 #define UDF_LOGICAL_SECTOR_SHIFT        11
-#define UDF_VRS_START_OFFSET            ((UINT64) (16 << UDF_LOGICAL_SECTOR_SHIFT))
+#define UDF_VRS_START_OFFSET            ((UINT64)(16 << UDF_LOGICAL_SECTOR_SHIFT))
 #define UDF_STANDARD_IDENTIFIER_LENGTH  5
 #define UDF_CDROM_VOLUME_IDENTIFIER     "CD001"
+
+#define UDF_DEFAULT_LV_NUM              0
 
 #define _GET_TAG_ID(_Pointer) \
   (((UDF_DESCRIPTOR_TAG *)(_Pointer))->TagIdentifier)
@@ -473,6 +475,7 @@ typedef struct {
   UINTN                          PartitionDescsNo;
   UDF_FILE_SET_DESCRIPTOR        **FileSetDescs;
   UINTN                          FileSetDescsNo;
+  UINTN                          FileEntrySize;
 } UDF_VOLUME_INFO;
 
 typedef struct {

@@ -869,7 +869,10 @@ UdfGetInfo (
 
     FileSystemInfo->Size        = FileSystemInfoLength;
     FileSystemInfo->ReadOnly    = TRUE;
-    FileSystemInfo->BlockSize   = LV_BLOCK_SIZE (&PrivFsData->Volume, 0);
+    FileSystemInfo->BlockSize   = LV_BLOCK_SIZE (
+                                          &PrivFsData->Volume,
+                                          UDF_DEFAULT_LV_NUM
+                                          );
     FileSystemInfo->VolumeSize  = VolumeSize;
     FileSystemInfo->FreeSpace   = FreeSpaceSize;
 
