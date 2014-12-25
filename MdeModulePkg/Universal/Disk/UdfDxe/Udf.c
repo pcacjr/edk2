@@ -106,9 +106,6 @@ UdfDriverBindingSupported (
     goto Error_Open_BlockIo;
   }
 
-  //
-  // Check if media contains a valid UDF volume
-  //
   Status = SupportUdfFileSystem (BlockIo, DiskIo);
   if (EFI_ERROR (Status)) {
     goto Error_No_Udf_Volume;
@@ -373,7 +370,7 @@ Exit:
 }
 
 /**
-  The user Entry Point for UDF filesystem driver. The user code starts with
+  The user Entry Point for UDF file system driver. The user code starts with
   this function.
 
   @param[in] ImageHandle    The firmware allocated handle for the EFI image.

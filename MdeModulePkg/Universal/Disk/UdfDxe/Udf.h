@@ -37,10 +37,6 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/DevicePathLib.h>
 
-//
-// As specified in ECMA-167 specification, the logical sector size shall be
-// 2048 bytes.
-//
 #define UDF_LOGICAL_SECTOR_SHIFT        11
 #define UDF_LOGICAL_SECTOR_SIZE         ((UINT64)(1 << UDF_LOGICAL_SECTOR_SHIFT))
 #define UDF_VRS_START_OFFSET            ((UINT64)(16 << UDF_LOGICAL_SECTOR_SHIFT))
@@ -192,40 +188,28 @@ typedef struct {
 
 #pragma pack(1)
 
-//
-// UDF's Volume Structures
-//
 typedef struct {
   UINT16               TagIdentifier;
   UINT16               DescriptorVersion;
   UINT8                TagChecksum;
   UINT8                Reserved;
-  UINT16               TagSerialNumber; // Ignored. Intended for disaster recovery.
+  UINT16               TagSerialNumber;
   UINT16               DescriptorCRC;
   UINT16               DescriptorCRCLength;
   UINT32               TagLocation;
 } UDF_DESCRIPTOR_TAG;
 
-//
-// ECMA 167 1/7.2.1
-//
 typedef struct {
   UINT8           CharacterSetType;
   UINT8           CharacterSetInfo[63];
 } UDF_CHAR_SPEC;
 
-//
-// ECMA 167 1/7.4
-//
 typedef struct {
   UINT8           Flags;
   UINT8           Identifier[23];
   UINT8           IdentifierSuffix[8];
 } UDF_ENTITY_ID;
 
-//
-// ECMA 167 1/7.3
-//
 typedef struct {
   UINT16          TypeAndTimezone;
   INT16           Year;
@@ -239,43 +223,28 @@ typedef struct {
   UINT8           Microseconds;
 } UDF_TIMESTAMP;
 
-//
-// ECMA 167 3/7.1
-//
 typedef struct {
   UINT32          ExtentLength;
   UINT32          ExtentLocation;
 } UDF_EXTENT_AD;
 
-//
-// ECMA 167 4/7.1
-//
 typedef struct {
   UINT32        LogicalBlockNumber;
   UINT16        PartitionReferenceNumber;
 } UDF_LB_ADDR;
 
-//
-// ECMA 167 4/14.14.2
-//
 typedef struct {
   UINT32                           ExtentLength;
   UDF_LB_ADDR                      ExtentLocation;
   UINT8                            ImplementationUse[6];
 } UDF_LONG_ALLOCATION_DESCRIPTOR;
 
-//
-// ECMA 167 4/14.5
-//
 typedef struct {
   UDF_DESCRIPTOR_TAG                 DescriptorTag;
   UINT32                             PrevAllocationExtentDescriptor;
   UINT32                             LengthOfAllocationDescriptors;
 } UDF_ALLOCATION_EXTENT_DESCRIPTOR;
 
-//
-// ECMA 167 3/9.1
-//
 typedef struct {
   UINT8                   StructureType;
   UINT8                   StandardIdentifier[UDF_STANDARD_IDENTIFIER_LENGTH];
@@ -291,9 +260,6 @@ typedef struct {
   UINT8                                  Reserved[480];
 } UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER;
 
-//
-// ECMA 167 3/10.5
-//
 typedef struct {
   UDF_DESCRIPTOR_TAG         DescriptorTag;
   UINT32                     VolumeDescriptorSequenceNumber;
@@ -309,9 +275,6 @@ typedef struct {
   UINT8                      Reserved[156];
 } UDF_PARTITION_DESCRIPTOR;
 
-//
-// ECMA 167 3/10.6
-//
 typedef struct {
   UDF_DESCRIPTOR_TAG              DescriptorTag;
   UINT32                          VolumeDescriptorSequenceNumber;
@@ -339,9 +302,6 @@ typedef struct {
   UINT8                          Data[0];
 } UDF_LOGICAL_VOLUME_INTEGRITY;
 
-//
-// ECMA 167 4/14.1
-//
 typedef struct {
   UDF_DESCRIPTOR_TAG              DescriptorTag;
   UDF_TIMESTAMP                   RecordingDateAndTime;
@@ -364,17 +324,11 @@ typedef struct {
   UINT8                           Reserved[32];
 } UDF_FILE_SET_DESCRIPTOR;
 
-//
-// ECMA 167 4/14.14.1
-//
 typedef struct {
   UINT32                            ExtentLength;
   UINT32                            ExtentPosition;
 } UDF_SHORT_ALLOCATION_DESCRIPTOR;
 
-//
-// ECMA 167 4/14.3
-//
 typedef struct {
   UDF_DESCRIPTOR_TAG               DescriptorTag;
   UINT16                           FileVersionNumber;
@@ -385,9 +339,6 @@ typedef struct {
   UINT8                            Data[0];
 } UDF_FILE_IDENTIFIER_DESCRIPTOR;
 
-//
-// ECMA 167 4/14.6
-//
 typedef struct {
   UINT32        PriorRecordNumberOfDirectEntries;
   UINT16        StrategyType;
@@ -399,12 +350,6 @@ typedef struct {
   UINT16        Flags;
 } UDF_ICB_TAG;
 
-//
-// ECMA 167 4/14.9
-//
-// NOTE: The total length of a FE shall not exceed the size of one logical block
-// (2048 bytes).
-//
 typedef struct {
   UDF_DESCRIPTOR_TAG              DescriptorTag;
   UDF_ICB_TAG                     IcbTag;
@@ -565,8 +510,8 @@ extern EFI_COMPONENT_NAME2_PROTOCOL  gUdfComponentName2;
 EFI_STATUS
 EFIAPI
 UdfOpenVolume (
-  IN EFI_SIMPLE_FILE_SYSTEM_PROTOCOL     *This,
-  OUT EFI_FILE_PROTOCOL                  **Root
+  IN   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *This,
+  OUT  EFI_FILE_PROTOCOL                **Root
   );
 
 /**
@@ -592,11 +537,11 @@ UdfOpenVolume (
 EFI_STATUS
 EFIAPI
 UdfOpen (
-  IN  EFI_FILE_PROTOCOL                  *This,
-  OUT EFI_FILE_PROTOCOL                  **NewHandle,
-  IN  CHAR16                             *FileName,
-  IN  UINT64                             OpenMode,
-  IN  UINT64                             Attributes
+  IN   EFI_FILE_PROTOCOL  *This,
+  OUT  EFI_FILE_PROTOCOL  **NewHandle,
+  IN   CHAR16             *FileName,
+  IN   UINT64             OpenMode,
+  IN   UINT64             Attributes
   );
 
 /**
@@ -616,32 +561,33 @@ UdfOpen (
 EFI_STATUS
 EFIAPI
 UdfRead (
-  IN     EFI_FILE_PROTOCOL  *This,
-  IN OUT UINTN              *BufferSize,
-  OUT    VOID               *Buffer
+  IN      EFI_FILE_PROTOCOL  *This,
+  IN OUT  UINTN              *BufferSize,
+  OUT     VOID               *Buffer
   );
 
 /**
-  Close the file handle
+  Close the file handle.
 
-  @param  This          Protocol instance pointer.
+  @param  This Protocol instance pointer.
 
-  @retval EFI_SUCCESS   The file was closed.
+  @retval EFI_SUCCESS The file was closed.
 
 **/
 EFI_STATUS
 EFIAPI
 UdfClose (
-  IN EFI_FILE_PROTOCOL    *This
+  IN EFI_FILE_PROTOCOL *This
   );
 
 /**
   Close and delete the file handle.
 
-  @param  This                     Protocol instance pointer.
+  @param  This Protocol instance pointer.
 
   @retval EFI_SUCCESS              The file was closed and deleted.
-  @retval EFI_WARN_DELETE_FAILURE  The handle was closed but the file was not deleted.
+  @retval EFI_WARN_DELETE_FAILURE  The handle was closed but the file was not
+                                   deleted.
 
 **/
 EFI_STATUS
@@ -671,43 +617,43 @@ UdfDelete (
 EFI_STATUS
 EFIAPI
 UdfWrite (
-  IN     EFI_FILE_PROTOCOL  *This,
-  IN OUT UINTN              *BufferSize,
-  IN     VOID               *Buffer
+  IN      EFI_FILE_PROTOCOL  *This,
+  IN OUT  UINTN              *BufferSize,
+  IN      VOID               *Buffer
   );
 
 /**
-  Get a file's current position
+  Get file's current position.
 
-  @param  This            Protocol instance pointer.
-  @param  Position        Byte position from the start of the file.
+  @param  This      Protocol instance pointer.
+  @param  Position  Byte position from the start of the file.
 
   @retval EFI_SUCCESS     Position was updated.
-  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open.
+  @retval EFI_UNSUPPORTED Seek request for directories is not valid.
 
 **/
 EFI_STATUS
 EFIAPI
 UdfGetPosition (
-  IN  EFI_FILE_PROTOCOL   *This,
-  OUT UINT64              *Position
+  IN   EFI_FILE_PROTOCOL  *This,
+  OUT  UINT64             *Position
   );
 
 /**
-  Set file's current position
+  Set file's current position.
 
-  @param  This            Protocol instance pointer.
-  @param  Position        Byte position from the start of the file.
+  @param  This      Protocol instance pointer.
+  @param  Position  Byte position from the start of the file.
 
-  @retval EFI_SUCCESS     Position was updated.
-  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open..
+  @retval EFI_SUCCESS      Position was updated.
+  @retval EFI_UNSUPPORTED  Seek request for non-zero is not valid on open.
 
 **/
 EFI_STATUS
 EFIAPI
 UdfSetPosition (
-  IN EFI_FILE_PROTOCOL             *This,
-  IN UINT64                        Position
+  IN EFI_FILE_PROTOCOL  *This,
+  IN UINT64             Position
   );
 
 /**
@@ -731,14 +677,14 @@ UdfSetPosition (
 EFI_STATUS
 EFIAPI
 UdfGetInfo (
-  IN     EFI_FILE_PROTOCOL  *This,
-  IN     EFI_GUID           *InformationType,
-  IN OUT UINTN              *BufferSize,
-  OUT    VOID               *Buffer
+  IN      EFI_FILE_PROTOCOL  *This,
+  IN      EFI_GUID           *InformationType,
+  IN OUT  UINTN              *BufferSize,
+  OUT     VOID               *Buffer
   );
 
 /**
-  Set information about a file
+  Set information about a file.
 
   @param  File            Protocol instance pointer.
   @param  InformationType Type of information in Buffer.
@@ -757,10 +703,10 @@ UdfGetInfo (
 EFI_STATUS
 EFIAPI
 UdfSetInfo (
-  IN EFI_FILE_PROTOCOL*This,
-  IN EFI_GUID         *InformationType,
-  IN UINTN            BufferSize,
-  IN VOID             *Buffer
+  IN EFI_FILE_PROTOCOL  *This,
+  IN EFI_GUID           *InformationType,
+  IN UINTN              BufferSize,
+  IN VOID               *Buffer
   );
 
 /**
@@ -781,217 +727,354 @@ UdfSetInfo (
 EFI_STATUS
 EFIAPI
 UdfFlush (
-  IN EFI_FILE_PROTOCOL  *This
+  IN EFI_FILE_PROTOCOL *This
   );
 
-VOID
-DuplicateFid (
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR    *FileIdentifierDesc,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR   **NewFileIdentifierDesc
-  );
+/**
+  Get a filename (encoded in OSTA-compressed format) from a File Identifier
+  Descriptor on an UDF volume.
 
-VOID
-DuplicateFe (
-  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN   UDF_VOLUME_INFO        *Volume,
-  IN   VOID                   *FileEntry,
-  OUT  VOID                   **NewFileEntry
-  );
+  @param[in]   FileIdentifierDesc  File Identifier Descriptor pointer.
+  @param[out]  FileName            Decoded filename.
 
+  @retval EFI_SUCCESS           Filename decoded and read.
+  @retval EFI_VOLUME_CORRUPTED  The file system structures are corrupted.
+**/
 EFI_STATUS
-FindRootDirectory (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  OUT UDF_PARTITION_DESCRIPTOR               *PartitionDesc,
-  OUT UDF_LOGICAL_VOLUME_DESCRIPTOR          *LogicalVolDesc,
-  OUT VOID                                   *Data,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         *FileIdentifierDesc
+GetFileNameFromFid (
+  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc,
+  OUT  CHAR16                          *FileName
   );
 
+/**
+  Resolve a symlink file on an UDF volume.
+
+  @param[in]   BlockIo        BlockIo interface.
+  @param[in]   DiskIo         DiskIo interface.
+  @param[in]   Volume         UDF volume information structure.
+  @param[in]   Parent         Parent file.
+  @param[in]   FileEntryData  FE/EFE structure pointer.
+  @param[out]  File           Resolved file.
+
+  @retval EFI_SUCCESS          Symlink file resolved.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The symlink file was not resolved due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+ResolveSymlink (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   UDF_FILE_INFO          *Parent,
+  IN   VOID                   *FileEntryData,
+  OUT  UDF_FILE_INFO          *File
+  );
+
+/**
+  Find either a File Entry or a Extended File Entry from a given ICB.
+
+  @param[in]   BlockIo    BlockIo interface.
+  @param[in]   DiskIo     DiskIo interface.
+  @param[in]   Volume     UDF volume information structure.
+  @param[in]   Icb        ICB of the FID.
+  @param[out]  FileEntry  File Entry or Extended File Entry.
+
+  @retval EFI_SUCCESS          File Entry or Extended File Entry found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The FE/EFE entry was not found due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+FindFileEntry (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
+  OUT  VOID                            **FileEntry
+  );
+
+/**
+  Find a file given its absolute path on an UDF volume.
+
+  @param[in]   BlockIo   BlockIo interface.
+  @param[in]   DiskIo    DiskIo interface.
+  @param[in]   Volume    UDF volume information structure.
+  @param[in]   FilePath  File's absolute path.
+  @param[in]   Root      Root directory file.
+  @param[in]   Parent    Parent directory file.
+  @param[out]  File      Found file.
+
+  @retval EFI_SUCCESS          @p FilePath was found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The @p FilePath file was not found due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+FindFile (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   CHAR16                          *FilePath,
+  IN   UDF_FILE_INFO                   *Root,
+  IN   UDF_FILE_INFO                   *Parent,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
+  OUT  UDF_FILE_INFO                   *File
+  );
+
+/**
+  Find a file from its absolute path on an UDF volume.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+  @param[in]   Volume   UDF volume information structure.
+  @param[in]   File     File information structure.
+  @param[out]  Size     Size of the file.
+
+  @retval EFI_SUCCESS          File size calculated and set in @p Size.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file size was not calculated due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 GetFileSize (
-  IN EFI_BLOCK_IO_PROTOCOL          *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL           *DiskIo,
-  IN UDF_VOLUME_INFO                *Volume,
-  IN UDF_FILE_INFO                  *File,
-  OUT UINT64                        *Size
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   UDF_FILE_INFO          *File,
+  OUT  UINT64                 *Size
   );
 
+/**
+  Seek a file and read its data into memory on an UDF volume.
+
+  @param[in]      BlockIo       BlockIo interface.
+  @param[in]      DiskIo        DiskIo interface.
+  @param[in]      Volume        UDF volume information structure.
+  @param[in]      File          File information structure.
+  @param[in]      FileSize      Size of the file.
+  @param[in out]  FilePosition  File position.
+  @param[in out]  Buffer        File data.
+  @param[in out]  BufferSize    Read size.
+
+  @retval EFI_SUCCESS          File seeked and read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file's recorded data was not read due to lack
+                               of resources.
+
+**/
 EFI_STATUS
 ReadFileData (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_VOLUME_INFO                         *Volume,
-  IN UDF_FILE_INFO                           *File,
-  IN UINT64                                  FileSize,
-  IN OUT UINT64                              *FilePosition,
-  IN OUT VOID                                *Buffer,
-  IN OUT UINT64                              *BufferSize
+  IN      EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN      EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN      UDF_VOLUME_INFO        *Volume,
+  IN      UDF_FILE_INFO          *File,
+  IN      UINT64                 FileSize,
+  IN OUT  UINT64                 *FilePosition,
+  IN OUT  VOID                   *Buffer,
+  IN OUT  UINT64                 *BufferSize
   );
 
-EFI_STATUS
-ReadFile (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_VOLUME_INFO                         *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN VOID                                    *FileEntryData,
-  IN OUT UDF_READ_FILE_INFO                  *ReadFileInfo
-  );
+/**
+  Read a directory entry at a time on an UDF volume.
 
+  @param[in]      BlockIo        BlockIo interface.
+  @param[in]      DiskIo         DiskIo interface.
+  @param[in]      Volume         UDF volume information structure.
+  @param[in]      ParentIcb      ICB of the parent file.
+  @param[in]      FileEntryData  FE/EFE of the parent file.
+  @param[in out]  ReadDirInfo    Next read directory listing structure
+                                 information.
+  @param[out]     FoundFid       File Identifier Descriptor pointer.
+
+  @retval EFI_SUCCESS          Directory entry read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The directory entry was not read due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 ReadDirectoryEntry (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN UDF_VOLUME_INFO                         *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR          *ParentIcb,
-  IN VOID                                    *FileEntryData,
-  IN OUT UDF_READ_DIRECTORY_INFO             *ReadDirInfo,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR         **FoundFileIdentifierDesc
+  IN      EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN      EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN      UDF_VOLUME_INFO                 *Volume,
+  IN      UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
+  IN      VOID                            *FileEntryData,
+  IN OUT  UDF_READ_DIRECTORY_INFO         *ReadDirInfo,
+  OUT     UDF_FILE_IDENTIFIER_DESCRIPTOR  **FoundFid
   );
 
+/**
+  Read volume information on a medium which contains a valid UDF file system.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+  @param[out]  Volume   UDF volume information structure.
+
+  @retval EFI_SUCCESS          Volume information read.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The volume was not read due to lack of resources.
+
+**/
+EFI_STATUS
+ReadUdfVolumeInformation (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  OUT  UDF_VOLUME_INFO        *Volume
+  );
+
+/**
+  Find the root directory on an UDF volume.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+  @param[in]   Volume   UDF volume information structure.
+  @param[out]  File     Root directory file.
+
+  @retval EFI_SUCCESS          Root directory found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The root directory was not found due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+FindRootDirectory (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  OUT  UDF_FILE_INFO          *File
+  );
+
+/**
+  Set information about a file on an UDF volume.
+
+  @param[in]      File        File pointer.
+  @param[in]      FileSize    Size of the file.
+  @param[in]      FileName    Filename of the file.
+  @param[in out]  BufferSize  Size of the returned file infomation.
+  @param[out]     Buffer      Data of the returned file information.
+
+  @retval EFI_SUCCESS          File information set.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file information was not set due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 SetFileInfo (
-  IN UDF_FILE_INFO                    *File,
-  IN UINT64                           FileSize,
-  IN CHAR16                           *FileName,
-  IN OUT UINTN                        *BufferSize,
-  OUT VOID                            *Buffer
+  IN      UDF_FILE_INFO  *File,
+  IN      UINT64         FileSize,
+  IN      CHAR16         *FileName,
+  IN OUT  UINTN          *BufferSize,
+  OUT     VOID           *Buffer
   );
 
+/**
+  Get volume and free space size information of an UDF volume.
+
+  @param[in]   BlockIo        BlockIo interface.
+  @param[in]   DiskIo         DiskIo interface.
+  @param[in]   Volume         UDF volume information structure.
+  @param[out]  VolumeSize     Volume size.
+  @param[out]  FreeSpaceSize  Free space size.
+
+  @retval EFI_SUCCESS          Volume and free space size calculated.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The volume and free space size were not
+                               calculated due to lack of resources.
+
+**/
 EFI_STATUS
 GetVolumeSize (
-  IN  EFI_BLOCK_IO_PROTOCOL      *BlockIo,
-  IN  EFI_DISK_IO_PROTOCOL       *DiskIo,
-  IN  UDF_VOLUME_INFO            *Volume,
-  OUT UINT64                     *VolumeSize,
-  OUT UINT64                     *FreeSpaceSize
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  OUT  UINT64                 *VolumeSize,
+  OUT  UINT64                 *FreeSpaceSize
   );
 
+/**
+  Check if medium contains an UDF file system.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+
+  @retval EFI_SUCCESS          UDF file system found.
+  @retval EFI_UNSUPPORTED      UDF file system not found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The scan was not successful due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 SupportUdfFileSystem (
   IN  EFI_BLOCK_IO_PROTOCOL  *BlockIo,
   IN  EFI_DISK_IO_PROTOCOL   *DiskIo
   );
 
-EFI_STATUS
-ReadVolumeFileStructure (
-  IN EFI_BLOCK_IO_PROTOCOL               *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                *DiskIo,
-  OUT UDF_VOLUME_INFO                    *Volume
+/**
+  Clean up in-memory UDF volume information.
+
+  @param[in] Volume Volume information pointer.
+
+**/
+VOID
+CleanupVolumeInformation (
+  IN UDF_VOLUME_INFO *Volume
   );
 
-EFI_STATUS
-FindFileEntry (
-  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
-  OUT VOID                            **FileEntry
-  );
+/**
+  Clean up in-memory UDF file information.
 
-EFI_STATUS
-ResolveSymlink (
-  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN UDF_FILE_INFO                    *Parent,
-  IN VOID                             *FileEntryData,
-  OUT UDF_FILE_INFO                   *File
-  );
+  @param[in] File File information pointer.
 
-EFI_STATUS
-InternalFindFile (
-  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN CHAR16                           *FileName,
-  IN UDF_FILE_INFO                    *Parent,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
-  OUT UDF_FILE_INFO                   *File
-  );
-
-UINT64
-GetLsnFromLongAd (
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *LongAd
-  );
-
-UINT64
-GetLsnFromShortAd (
-  IN UDF_PARTITION_DESCRIPTOR         *PartitionDesc,
-  IN UDF_SHORT_ALLOCATION_DESCRIPTOR  *ShortAd
-  );
-
-EFI_STATUS
-GetFileSetDescriptors (
-  IN EFI_BLOCK_IO_PROTOCOL                   *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL                    *DiskIo,
-  IN OUT UDF_VOLUME_INFO                     *Volume
-  );
-
-EFI_STATUS
-GetFileNameFromFid (
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  OUT CHAR16                          *FileName
-  );
-
-EFI_STATUS
-FindFile (
-  IN EFI_BLOCK_IO_PROTOCOL            *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL             *DiskIo,
-  IN UDF_VOLUME_INFO                  *Volume,
-  IN CHAR16                           *FilePath,
-  IN UDF_FILE_INFO                    *Root,
-  IN UDF_FILE_INFO                    *Parent,
-  IN UDF_LONG_ALLOCATION_DESCRIPTOR   *Icb,
-  OUT UDF_FILE_INFO                   *File
-  );
-
-EFI_STATUS
-GetAedAdsData (
-  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
-  IN   UDF_VOLUME_INFO                 *Volume,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
-  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
-  IN   VOID                            *Ad,
-  OUT  VOID                            **Data,
-  OUT  UINT64                          *Length
-  );
-
-EFI_STATUS
-DuplicateFileIdentifierDescriptor (
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR    *FileIdentifierDesc,
-  OUT UDF_FILE_IDENTIFIER_DESCRIPTOR   **NewFileIdentifierDesc
-  );
-
-EFI_STATUS
-DuplicateFileEntry (
-  IN EFI_BLOCK_IO_PROTOCOL   *BlockIo,
-  IN VOID                    *FileEntry,
-  OUT VOID                   **NewFileEntry
-  );
-
-EFI_STATUS
-FileIdentifierDescToFileName (
-  IN UDF_FILE_IDENTIFIER_DESCRIPTOR   *FileIdentifierDesc,
-  OUT UINT16                          **FileName
-  );
-
-CHAR16 *
-MangleFileName (
-  CHAR16           *FileName
-  );
-
+**/
 VOID
 CleanupFileInformation (
   IN UDF_FILE_INFO *File
   );
 
-VOID
-CleanupVolumeInformation (
-  IN UDF_VOLUME_INFO *Volume
+/**
+  Mangle a filename by cutting off trailing whitespaces, "\\", "." and "..".
+
+  @param[in] FileName Filename.
+
+  @retval @p FileName Filename mangled.
+
+**/
+CHAR16 *
+MangleFileName (
+  CHAR16 *FileName
   );
 
 /**
@@ -1183,11 +1266,11 @@ UdfComponentNameGetDriverName (
 EFI_STATUS
 EFIAPI
 UdfComponentNameGetControllerName (
-  IN  EFI_COMPONENT_NAME_PROTOCOL                     *This,
-  IN  EFI_HANDLE                                      ControllerHandle,
-  IN  EFI_HANDLE                                      ChildHandle        OPTIONAL,
-  IN  CHAR8                                           *Language,
-  OUT CHAR16                                          **ControllerName
+  IN   EFI_COMPONENT_NAME_PROTOCOL  *This,
+  IN   EFI_HANDLE                   ControllerHandle,
+  IN   EFI_HANDLE                   ChildHandle OPTIONAL,
+  IN   CHAR8                        *Language,
+  OUT  CHAR16                       **ControllerName
   );
 
 #endif // _UDF_H_

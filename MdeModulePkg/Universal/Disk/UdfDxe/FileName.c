@@ -80,6 +80,14 @@ Exit:
   return String;
 }
 
+/**
+  Mangle a filename by cutting off trailing whitespaces, "\\", "." and "..".
+
+  @param[in] FileName Filename.
+
+  @retval @p FileName Filename mangled.
+
+**/
 CHAR16 *
 MangleFileName (
   IN CHAR16        *FileName

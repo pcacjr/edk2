@@ -345,6 +345,378 @@ GetAllocationDescriptorLsn (
 }
 
 //
+// Read next Short Allocation Descriptor from the given file's data.
+//
+EFI_STATUS
+GetShortAdFromAds (
+  IN      VOID                             *Data,
+  IN OUT  UINT64                           *Offset,
+  IN      UINT64                           Length,
+  OUT     UDF_SHORT_ALLOCATION_DESCRIPTOR  **FoundShortAd
+  )
+{
+  UDF_SHORT_ALLOCATION_DESCRIPTOR *ShortAd;
+  UDF_EXTENT_FLAGS                ExtentFlags;
+
+  for (;;) {
+    if (*Offset >= Length) {
+      //
+      // No more Short Allocation Descriptors.
+      //
+      return EFI_DEVICE_ERROR;
+    }
+
+    ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)((UINT8 *)Data +
+						  *Offset);
+
+    //
+    // If it's either an indirect AD (Extended Alllocation Descriptor) or an
+    // allocated AD, then return it.
+    //
+    ExtentFlags = GET_EXTENT_FLAGS (SHORT_ADS_SEQUENCE, ShortAd);
+    if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
+	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
+      break;
+    }
+
+    //
+    // This AD is either not recorded but allocated, or not recorded and not
+    // allocated. Skip it.
+    //
+    *Offset += AD_LENGTH (SHORT_ADS_SEQUENCE);
+  }
+
+  *FoundShortAd = ShortAd;
+
+  return EFI_SUCCESS;
+}
+
+//
+// Read next Short Allocation Descriptor from the given file's data.
+//
+EFI_STATUS
+GetLongAdFromAds (
+  IN      VOID                            *Data,
+  IN OUT  UINT64                          *Offset,
+  IN      UINT64                          Length,
+  OUT     UDF_LONG_ALLOCATION_DESCRIPTOR  **FoundLongAd
+  )
+{
+  UDF_LONG_ALLOCATION_DESCRIPTOR  *LongAd;
+  UDF_EXTENT_FLAGS                ExtentFlags;
+
+  for (;;) {
+    if (*Offset >= Length) {
+      //
+      // No more Long Allocation Descriptors.
+      //
+      return EFI_DEVICE_ERROR;
+    }
+
+    LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)(
+                                           (UINT8 *)Data +
+					   *Offset
+                                           );
+
+    //
+    // If it's either an indirect AD (Extended Alllocation Descriptor) or an
+    // allocated AD, then return it.
+    //
+    ExtentFlags = GET_EXTENT_FLAGS (LONG_ADS_SEQUENCE, LongAd);
+    if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
+	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
+      break;
+    }
+
+    //
+    // This AD is either not recorded but allocated, or not recorded and not
+    // allocated. Skip it.
+    //
+    *Offset += AD_LENGTH (LONG_ADS_SEQUENCE);
+  }
+
+  *FoundLongAd = LongAd;
+
+  return EFI_SUCCESS;
+}
+
+
+//
+// Get either a Short Allocation Descriptor or a Long Allocation Descriptor from
+// the given file's data.
+//
+EFI_STATUS
+GetAllocationDescriptor (
+  IN      UDF_FE_RECORDING_FLAGS  RecordingFlags,
+  IN      VOID                    *Data,
+  IN OUT  UINT64                  *Offset,
+  IN      UINT64                  Length,
+  OUT     VOID                    **FoundAd
+  )
+{
+  if (RecordingFlags == LONG_ADS_SEQUENCE) {
+    return GetLongAdFromAds (
+                         Data,
+			 Offset,
+			 Length,
+			 (UDF_LONG_ALLOCATION_DESCRIPTOR **)FoundAd
+                         );
+  } else if (RecordingFlags == SHORT_ADS_SEQUENCE) {
+    return GetShortAdFromAds (
+                         Data,
+                         Offset,
+                         Length,
+                         (UDF_SHORT_ALLOCATION_DESCRIPTOR **)FoundAd
+                         );
+  }
+
+  return EFI_DEVICE_ERROR;
+}
+
+//
+// Get Allocation Descriptors' data information from the given FE/EFE.
+//
+VOID
+GetAdsInformation (
+  IN   VOID    *FileEntryData,
+  OUT  VOID    **AdsData,
+  OUT  UINT64  *Length
+  )
+{
+  UDF_EXTENDED_FILE_ENTRY  *ExtendedFileEntry;
+  UDF_FILE_ENTRY           *FileEntry;
+
+  if (IS_EFE (FileEntryData)) {
+    ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
+
+    *Length = ExtendedFileEntry->LengthOfAllocationDescriptors;
+    *AdsData = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
+			ExtendedFileEntry->LengthOfExtendedAttributes);
+  } else if (IS_FE (FileEntryData)) {
+    FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
+
+    *Length = FileEntry->LengthOfAllocationDescriptors;
+    *AdsData = (VOID *)((UINT8 *)&FileEntry->Data[0] +
+			FileEntry->LengthOfExtendedAttributes);
+  }
+}
+
+//
+// Return offset + length of a given indirect Allocation Descriptor (AED).
+//
+EFI_STATUS
+GetAedAdsOffset (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
+  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
+  IN   VOID                            *Ad,
+  OUT  UINT64                          *Offset,
+  OUT  UINT64                          *Length
+  )
+{
+  EFI_STATUS                        Status;
+  UINT32                            ExtentLength;
+  UINT64                            Lsn;
+  VOID                              *Data;
+  UINT32                            LogicalBlockSize;
+  UDF_ALLOCATION_EXTENT_DESCRIPTOR  *AllocExtDesc;
+
+  ExtentLength  = GET_EXTENT_LENGTH (RecordingFlags, Ad);
+  Lsn           = GetAllocationDescriptorLsn (
+                                    RecordingFlags,
+                                    Volume,
+                                    ParentIcb,
+                                    Ad
+                                    );
+
+  Data = AllocatePool (ExtentLength);
+  if (!Data) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+
+  //
+  // Read extent.
+  //
+  Status = DiskIo->ReadDisk (
+                          DiskIo,
+			  BlockIo->Media->MediaId,
+			  MultU64x32 (Lsn, LogicalBlockSize),
+			  ExtentLength,
+                          Data
+                          );
+  if (EFI_ERROR (Status)) {
+    goto Exit;
+  }
+
+  //
+  // Check if read extent contains a valid tag identifier for AED.
+  //
+  AllocExtDesc = (UDF_ALLOCATION_EXTENT_DESCRIPTOR *)Data;
+  if (!IS_AED (AllocExtDesc)) {
+    Status = EFI_VOLUME_CORRUPTED;
+    goto Exit;
+  }
+
+  //
+  // Get AED's block offset and its length.
+  //
+  *Offset = (UINT64)(MultU64x32 (Lsn, LogicalBlockSize) +
+		     sizeof (UDF_ALLOCATION_EXTENT_DESCRIPTOR));
+  *Length = AllocExtDesc->LengthOfAllocationDescriptors;
+
+Exit:
+  if (Data) {
+    FreePool (Data);
+  }
+
+  return Status;
+}
+
+//
+// Read Allocation Extent Descriptor into memory.
+//
+EFI_STATUS
+GetAedAdsData (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
+  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
+  IN   VOID                            *Ad,
+  OUT  VOID                            **Data,
+  OUT  UINT64                          *Length
+  )
+{
+  EFI_STATUS  Status;
+  UINT64      Offset;
+
+  //
+  // Get AED's offset + length.
+  //
+  Status = GetAedAdsOffset (
+                        BlockIo,
+			DiskIo,
+			Volume,
+			ParentIcb,
+			RecordingFlags,
+			Ad,
+			&Offset,
+			Length
+                        );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  //
+  // Allocate buffer to read in AED's data.
+  //
+  *Data = AllocatePool (*Length);
+  if (!Data) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  //
+  // Read it.
+  //
+  return DiskIo->ReadDisk (
+                        DiskIo,
+			BlockIo->Media->MediaId,
+			Offset,
+			*Length,
+			*Data
+                        );
+}
+
+//
+// Function used to serialise reads of Allocation Descriptors.
+//
+EFI_STATUS
+GrowUpBufferToNextAd (
+  IN      UDF_FE_RECORDING_FLAGS  RecordingFlags,
+  IN      VOID                    *Ad,
+  IN OUT  VOID                    **Buffer,
+  IN      UINT64                  Length
+  )
+{
+  UINT32 ExtentLength;
+
+  ExtentLength = GET_EXTENT_LENGTH (RecordingFlags, Ad);
+
+  if (!*Buffer) {
+    *Buffer = AllocatePool (ExtentLength);
+    if (!*Buffer) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+  } else {
+    *Buffer = ReallocatePool (Length, Length + ExtentLength, *Buffer);
+    if (!*Buffer) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+  }
+
+  return EFI_SUCCESS;
+}
+
+/**
+  Get a filename (encoded in OSTA-compressed format) from a File Identifier
+  Descriptor on an UDF volume.
+
+  @param[in]   FileIdentifierDesc  File Identifier Descriptor pointer.
+  @param[out]  FileName            Decoded filename.
+
+  @retval EFI_SUCCESS           Filename decoded and read.
+  @retval EFI_VOLUME_CORRUPTED  The file system structures are corrupted.
+**/
+EFI_STATUS
+GetFileNameFromFid (
+  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc,
+  OUT  CHAR16                          *FileName
+  )
+{
+  UINT8 *OstaCompressed;
+  UINT8 CompressionId;
+  UINT8 Length;
+  UINTN Index;
+
+  OstaCompressed =
+    (UINT8 *)(
+           (UINT8 *)&FileIdentifierDesc->Data[0] +
+	   FileIdentifierDesc->LengthOfImplementationUse
+           );
+
+  CompressionId = OstaCompressed[0];
+  if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
+    return EFI_VOLUME_CORRUPTED;
+  }
+
+  //
+  // Decode filename.
+  //
+  Length = FileIdentifierDesc->LengthOfFileIdentifier;
+  for (Index = 1; Index < Length; Index++) {
+    if (CompressionId == 16) {
+      *FileName = OstaCompressed[Index++] << 8;
+    } else {
+      *FileName = 0;
+    }
+
+    if (Index < Length) {
+      *FileName |= OstaCompressed[Index];
+    }
+
+    FileName++;
+  }
+
+  *FileName = L'\0';
+
+  return EFI_SUCCESS;
+}
+
+//
 // Find File Set Descriptor of the given Logical Volume Descriptor.
 //
 // The found FSD will contain the extent (LogicalVolumeContentsUse) where our
@@ -463,7 +835,7 @@ Error_Alloc_Fsd:
 }
 
 //
-// Get all volume information.
+// Read Volume and File Structure of an UDF file system.
 //
 EFI_STATUS
 ReadVolumeFileStructure (
@@ -538,238 +910,6 @@ GetFileEntryData (
 }
 
 //
-// Find File Entry/Extended File Entry and File Identifier Descriptor of the
-// given symlink file.
-//
-EFI_STATUS
-ResolveSymlink (
-  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
-  IN   UDF_VOLUME_INFO        *Volume,
-  IN   UDF_FILE_INFO          *Parent,
-  IN   VOID                   *FileEntryData,
-  OUT  UDF_FILE_INFO          *File
-  )
-{
-  EFI_STATUS          Status;
-  UDF_READ_FILE_INFO  ReadFileInfo;
-  UINT8               *Data;
-  UINT64              Length;
-  UINT8               *EndData;
-  UDF_PATH_COMPONENT  *PathComp;
-  UINT8               PathCompLength;
-  CHAR16              FileName[UDF_FILENAME_LENGTH];
-  CHAR16              *C;
-  UINTN               Index;
-  UINT8               CompressionId;
-  UDF_FILE_INFO       PreviousFile;
-
-  //
-  // Symlink files on UDF volumes do not contain so much data other than
-  // Path Components which resolves to real filenames, so it's OK to read in
-  // all its data here -- usually the data will be inline with the FE/EFE for
-  // lower filenames.
-  //
-  ReadFileInfo.Flags = READ_FILE_ALLOCATE_AND_READ;
-
-  Status = ReadFile (
-                 BlockIo,
-		 DiskIo,
-		 Volume,
-		 &Parent->FileIdentifierDesc->Icb,
-		 FileEntryData,
-		 &ReadFileInfo
-                 );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Length = ReadFileInfo.ReadLength;
-
-  Data = (UINT8 *)ReadFileInfo.FileData;
-  EndData = Data + Length;
-
-  CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
-
-  for (;;) {
-    PathComp = (UDF_PATH_COMPONENT *)Data;
-
-    PathCompLength = PathComp->LengthOfComponentIdentifier;
-
-    switch (PathComp->ComponentType) {
-      case 1:
-	//
-	// This Path Component specifies the root directory hierarchy subject to
-	// agreement between the originator and recipient of the medium. Skip it.
-	//
-	// Fall through.
-	//
-      case 2:
-	//
-	// "\\." of the current directory. Read next Path Component.
-	//
-	goto Next_Path_Component;
-      case 3:
-	//
-	// ".." (parent directory). Go to it.
-	//
-	CopyMem ((VOID *)FileName, L"..", 6);
-	break;
-      case 4:
-	//
-	// "." (current file). Duplicate both FE/EFE and FID of this file.
-	//
-	DuplicateFe (BlockIo, Volume, PreviousFile.FileEntry, &File->FileEntry);
-	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
-	goto Next_Path_Component;
-      case 5:
-	//
-	// This Path Component identifies an object, either a file or a
-	// directory or an alias.
-	//
-	// Decode it from the compressed data in ComponentIdentifier and find
-	// respective path.
-	//
-	CompressionId = PathComp->ComponentIdentifier[0];
-	if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
-	  return EFI_VOLUME_CORRUPTED;
-	}
-
-	C = FileName;
-	for (Index = 1; Index < PathCompLength; Index++) {
-	  if (CompressionId == 16) {
-	    *C = *(UINT8 *)((UINT8 *)PathComp->ComponentIdentifier +
-			    Index) << 8;
-	    Index++;
-	  } else {
-	    *C = 0;
-	  }
-
-	  if (Index < Length) {
-	    *C |= *(UINT8 *)((UINT8 *)PathComp->ComponentIdentifier + Index);
-	  }
-
-	  C++;
-	}
-
-	*C = L'\0';
-	break;
-    }
-
-    //
-    // Find file from the read filename in symlink file's data.
-    //
-    Status = InternalFindFile (
-                           BlockIo,
-			   DiskIo,
-			   Volume,
-			   FileName,
-			   &PreviousFile,
-			   NULL,
-			   File
-                           );
-    if (EFI_ERROR (Status)) {
-      goto Error_Find_File;
-    }
-
-Next_Path_Component:
-    Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
-    if (Data >= EndData) {
-      break;
-    }
-
-    if (CompareMem (
-	  (VOID *)&PreviousFile,
-	  (VOID *)Parent,
-	  sizeof (UDF_FILE_INFO)
-	  )
-      ) {
-      CleanupFileInformation (&PreviousFile);
-    }
-
-    CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
-  }
-
-  //
-  // Unmap the symlink file.
-  //
-  FreePool (ReadFileInfo.FileData);
-
-  return EFI_SUCCESS;
-
-Error_Find_File:
-  if (CompareMem (
-	(VOID *)&PreviousFile,
-	(VOID *)Parent,
-	sizeof (UDF_FILE_INFO)
-	)
-    ) {
-    CleanupFileInformation (&PreviousFile);
-  }
-
-  FreePool (ReadFileInfo.FileData);
-
-  return Status;
-}
-
-//
-// Find either a File Entry or an Extended File Entry from the given extent
-// (Icb).
-//
-EFI_STATUS
-FindFileEntry (
-  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
-  IN   UDF_VOLUME_INFO                 *Volume,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
-  OUT  VOID                            **FileEntry
-  )
-{
-  EFI_STATUS  Status;
-  UINT64      Lsn;
-  UINT32      LogicalBlockSize;
-
-  Lsn               = GetLongAdLsn (Volume, Icb);
-  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
-
-  *FileEntry = AllocateZeroPool (Volume->FileEntrySize);
-  if (!*FileEntry) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  //
-  // Read extent.
-  //
-  Status = DiskIo->ReadDisk (
-                          DiskIo,
-			  BlockIo->Media->MediaId,
-			  MultU64x32 (Lsn, LogicalBlockSize),
-			  Volume->FileEntrySize,
-			  *FileEntry
-                          );
-  if (EFI_ERROR (Status)) {
-    goto Error_Read_Disk_Blk;
-  }
-
-  //
-  // Check if the read extent contains a valid Tag Identifier for the expected
-  // FE/EFE.
-  //
-  if (!IS_FE (*FileEntry) && !IS_EFE (*FileEntry)) {
-    Status = EFI_VOLUME_CORRUPTED;
-    goto Error_Invalid_Fe;
-  }
-
-  return EFI_SUCCESS;
-
-Error_Invalid_Fe:
-Error_Read_Disk_Blk:
-  FreePool (*FileEntry);
-
-  return Status;
-}
-
-//
 // Calculate length of the given File Identifier Descriptor.
 //
 UINT64
@@ -811,51 +951,6 @@ DuplicateFe (
   )
 {
   *NewFileEntry = AllocateCopyPool (Volume->FileEntrySize, FileEntry);
-}
-
-//
-// Decode and read a filename from a given File Identifier Descriptor.
-//
-EFI_STATUS
-GetFileNameFromFid (
-  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc,
-  OUT  CHAR16                          *FileName
-  )
-{
-  UINT8 *OstaCompressed;
-  UINT8 CompressionId;
-  UINT8 Length;
-  UINTN Index;
-
-  OstaCompressed =
-    (UINT8 *)(
-           (UINT8 *)&FileIdentifierDesc->Data[0] +
-	   FileIdentifierDesc->LengthOfImplementationUse
-           );
-
-  CompressionId = OstaCompressed[0];
-  if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
-    return EFI_VOLUME_CORRUPTED;
-  }
-
-  Length = FileIdentifierDesc->LengthOfFileIdentifier;
-  for (Index = 1; Index < Length; Index++) {
-    if (CompressionId == 16) {
-      *FileName = OstaCompressed[Index++] << 8;
-    } else {
-      *FileName = 0;
-    }
-
-    if (Index < Length) {
-      *FileName |= OstaCompressed[Index];
-    }
-
-    FileName++;
-  }
-
-  *FileName = L'\0';
-
-  return EFI_SUCCESS;
 }
 
 //
@@ -1019,514 +1114,6 @@ Error_Find_Fe:
   FreePool ((VOID *)FileIdentifierDesc);
 
   return Status;
-}
-
-//
-// Find a file from a given absolute path.
-//
-EFI_STATUS
-FindFile (
-  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
-  IN   UDF_VOLUME_INFO                 *Volume,
-  IN   CHAR16                          *FilePath,
-  IN   UDF_FILE_INFO                   *Root,
-  IN   UDF_FILE_INFO                   *Parent,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
-  OUT  UDF_FILE_INFO                   *File
-  )
-{
-  EFI_STATUS     Status;
-  CHAR16         FileName[UDF_FILENAME_LENGTH];
-  CHAR16         *FileNamePointer;
-  UDF_FILE_INFO  PreviousFile;
-  VOID           *FileEntry;
-
-  Status = EFI_NOT_FOUND;
-
-  CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
-  while (*FilePath) {
-    FileNamePointer = FileName;
-    while (*FilePath && *FilePath != L'\\') {
-      *FileNamePointer++ = *FilePath++;
-    }
-
-    *FileNamePointer = L'\0';
-    if (!FileName[0]) {
-      //
-      // Open root directory.
-      //
-      if (!Root) {
-	//
-	// There is no file found for the root directory yet. So, find only its
-	// FID by now.
-	//
-	// See UdfOpenVolume() function.
-	//
-        Status = InternalFindFile (
-                               BlockIo,
-			       DiskIo,
-			       Volume,
-			       L"\\",
-			       &PreviousFile,
-			       Icb,
-			       File
-                               );
-      } else {
-	//
-	// We've already a file pointer (Root) for the root directory. Duplicate
-	// its FE/EFE and FID descriptors.
-	//
-	DuplicateFe (BlockIo, Volume, Root->FileEntry, &File->FileEntry);
-	DuplicateFid (Root->FileIdentifierDesc, &File->FileIdentifierDesc);
-	Status = EFI_SUCCESS;
-      }
-    } else {
-      //
-      // No root directory. Find filename from the current directory.
-      //
-      Status = InternalFindFile (
-                             BlockIo,
-			     DiskIo,
-			     Volume,
-			     FileName,
-			     &PreviousFile,
-			     Icb,
-			     File);
-    }
-
-    if (EFI_ERROR (Status)) {
-      return Status;
-    }
-
-    //
-    // Find the found file is a sysmlink, then finds its FE/EFE and FID descriptors.
-    //
-    if (IS_FE_SYMLINK (File->FileEntry)) {
-      FreePool ((VOID *)File->FileIdentifierDesc);
-
-      FileEntry = File->FileEntry;
-
-      Status = ResolveSymlink (
-                           BlockIo,
-			   DiskIo,
-			   Volume,
-			   &PreviousFile,
-			   FileEntry,
-			   File
-                           );
-      FreePool (FileEntry);
-      if (EFI_ERROR (Status)) {
-	return Status;
-      }
-    }
-
-    if (CompareMem (
-	  (VOID *)&PreviousFile,
-	  (VOID *)Parent,
-	  sizeof (UDF_FILE_INFO)
-	  )
-      ) {
-      CleanupFileInformation (&PreviousFile);
-    }
-
-    CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
-    if (*FilePath && *FilePath == L'\\') {
-      FilePath++;
-    }
-  }
-
-  return Status;
-}
-
-//
-// Read next Short Allocation Descriptor from the given file's data.
-//
-EFI_STATUS
-GetShortAdFromAds (
-  IN      VOID                             *Data,
-  IN OUT  UINT64                           *Offset,
-  IN      UINT64                           Length,
-  OUT     UDF_SHORT_ALLOCATION_DESCRIPTOR  **FoundShortAd
-  )
-{
-  UDF_SHORT_ALLOCATION_DESCRIPTOR *ShortAd;
-  UDF_EXTENT_FLAGS                ExtentFlags;
-
-  for (;;) {
-    if (*Offset >= Length) {
-      //
-      // No more Short Allocation Descriptors.
-      //
-      return EFI_DEVICE_ERROR;
-    }
-
-    ShortAd = (UDF_SHORT_ALLOCATION_DESCRIPTOR *)((UINT8 *)Data +
-						  *Offset);
-
-    //
-    // If it's either an indirect AD (Extended Alllocation Descriptor) or an
-    // allocated AD, then return it.
-    //
-    ExtentFlags = GET_EXTENT_FLAGS (SHORT_ADS_SEQUENCE, ShortAd);
-    if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
-	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
-      break;
-    }
-
-    //
-    // This AD is either not recorded but allocated, or not recorded and not
-    // allocated. Skip it.
-    //
-    *Offset += AD_LENGTH (SHORT_ADS_SEQUENCE);
-  }
-
-  *FoundShortAd = ShortAd;
-
-  return EFI_SUCCESS;
-}
-
-//
-// Read next Short Allocation Descriptor from the given file's data.
-//
-EFI_STATUS
-GetLongAdFromAds (
-  IN      VOID                            *Data,
-  IN OUT  UINT64                          *Offset,
-  IN      UINT64                          Length,
-  OUT     UDF_LONG_ALLOCATION_DESCRIPTOR  **FoundLongAd
-  )
-{
-  UDF_LONG_ALLOCATION_DESCRIPTOR  *LongAd;
-  UDF_EXTENT_FLAGS                ExtentFlags;
-
-  for (;;) {
-    if (*Offset >= Length) {
-      //
-      // No more Long Allocation Descriptors.
-      //
-      return EFI_DEVICE_ERROR;
-    }
-
-    LongAd = (UDF_LONG_ALLOCATION_DESCRIPTOR *)(
-                                           (UINT8 *)Data +
-					   *Offset
-                                           );
-
-    //
-    // If it's either an indirect AD (Extended Alllocation Descriptor) or an
-    // allocated AD, then return it.
-    //
-    ExtentFlags = GET_EXTENT_FLAGS (LONG_ADS_SEQUENCE, LongAd);
-    if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
-	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
-      break;
-    }
-
-    //
-    // This AD is either not recorded but allocated, or not recorded and not
-    // allocated. Skip it.
-    //
-    *Offset += AD_LENGTH (LONG_ADS_SEQUENCE);
-  }
-
-  *FoundLongAd = LongAd;
-
-  return EFI_SUCCESS;
-}
-
-//
-// Get either a Short Allocation Descriptor or a Long Allocation Descriptor from
-// the given file's data.
-//
-EFI_STATUS
-GetAllocationDescriptor (
-  IN      UDF_FE_RECORDING_FLAGS  RecordingFlags,
-  IN      VOID                    *Data,
-  IN OUT  UINT64                  *Offset,
-  IN      UINT64                  Length,
-  OUT     VOID                    **FoundAd
-  )
-{
-  if (RecordingFlags == LONG_ADS_SEQUENCE) {
-    return GetLongAdFromAds (
-                         Data,
-			 Offset,
-			 Length,
-			 (UDF_LONG_ALLOCATION_DESCRIPTOR **)FoundAd
-                         );
-  } else if (RecordingFlags == SHORT_ADS_SEQUENCE) {
-    return GetShortAdFromAds (
-                         Data,
-                         Offset,
-                         Length,
-                         (UDF_SHORT_ALLOCATION_DESCRIPTOR **)FoundAd
-                         );
-  }
-
-  return EFI_DEVICE_ERROR;
-}
-
-//
-// Get Allocation Descriptors' data information from the given FE/EFE.
-//
-VOID
-GetAdsInformation (
-  IN   VOID    *FileEntryData,
-  OUT  VOID    **AdsData,
-  OUT  UINT64  *Length
-  )
-{
-  UDF_EXTENDED_FILE_ENTRY  *ExtendedFileEntry;
-  UDF_FILE_ENTRY           *FileEntry;
-
-  if (IS_EFE (FileEntryData)) {
-    ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
-
-    *Length = ExtendedFileEntry->LengthOfAllocationDescriptors;
-    *AdsData = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
-			ExtendedFileEntry->LengthOfExtendedAttributes);
-  } else if (IS_FE (FileEntryData)) {
-    FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
-
-    *Length = FileEntry->LengthOfAllocationDescriptors;
-    *AdsData = (VOID *)((UINT8 *)&FileEntry->Data[0] +
-			FileEntry->LengthOfExtendedAttributes);
-  }
-}
-
-EFI_STATUS
-GetFileSize (
-  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
-  IN   UDF_VOLUME_INFO        *Volume,
-  IN   UDF_FILE_INFO          *File,
-  OUT  UINT64                 *Size
-  )
-{
-  EFI_STATUS          Status;
-  UDF_READ_FILE_INFO  ReadFileInfo;
-
-  ReadFileInfo.Flags = READ_FILE_GET_FILESIZE;
-
-  Status = ReadFile (
-                 BlockIo,
-		 DiskIo,
-		 Volume,
-		 &File->FileIdentifierDesc->Icb,
-		 File->FileEntry,
-		 &ReadFileInfo
-                 );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  *Size = ReadFileInfo.ReadLength;
-
-  return EFI_SUCCESS;
-}
-
-//
-// Read file's recorded data into memory. Seeking it to a specific file offset
-// (FilePosition) is also supported through READ_FILE_SEEK_AND_READ flag.
-//
-EFI_STATUS
-ReadFileData (
-  IN      EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN      EFI_DISK_IO_PROTOCOL   *DiskIo,
-  IN      UDF_VOLUME_INFO        *Volume,
-  IN      UDF_FILE_INFO          *File,
-  IN      UINT64                 FileSize,
-  IN OUT  UINT64                 *FilePosition,
-  IN OUT  VOID                   *Buffer,
-  IN OUT  UINT64                 *BufferSize
-  )
-{
-  EFI_STATUS          Status;
-  UDF_READ_FILE_INFO  ReadFileInfo;
-
-  ReadFileInfo.Flags         = READ_FILE_SEEK_AND_READ;
-  ReadFileInfo.FilePosition  = *FilePosition;
-  ReadFileInfo.FileData      = Buffer;
-  ReadFileInfo.FileDataSize  = *BufferSize;
-  ReadFileInfo.FileSize      = FileSize;
-
-  Status = ReadFile (
-                 BlockIo,
-		 DiskIo,
-		 Volume,
-		 &File->FileIdentifierDesc->Icb,
-		 File->FileEntry,
-		 &ReadFileInfo
-                 );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  *BufferSize = ReadFileInfo.FileDataSize;
-  *FilePosition = ReadFileInfo.FilePosition;
-
-  return EFI_SUCCESS;
-}
-
-//
-// Return offset + length of a given indirect Allocation Descriptor (AED).
-//
-EFI_STATUS
-GetAedAdsOffset (
-  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
-  IN   UDF_VOLUME_INFO                 *Volume,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
-  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
-  IN   VOID                            *Ad,
-  OUT  UINT64                          *Offset,
-  OUT  UINT64                          *Length
-  )
-{
-  EFI_STATUS                        Status;
-  UINT32                            ExtentLength;
-  UINT64                            Lsn;
-  VOID                              *Data;
-  UINT32                            LogicalBlockSize;
-  UDF_ALLOCATION_EXTENT_DESCRIPTOR  *AllocExtDesc;
-
-  ExtentLength  = GET_EXTENT_LENGTH (RecordingFlags, Ad);
-  Lsn           = GetAllocationDescriptorLsn (
-                                    RecordingFlags,
-                                    Volume,
-                                    ParentIcb,
-                                    Ad
-                                    );
-
-  Data = AllocatePool (ExtentLength);
-  if (!Data) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
-
-  //
-  // Read extent.
-  //
-  Status = DiskIo->ReadDisk (
-                          DiskIo,
-			  BlockIo->Media->MediaId,
-			  MultU64x32 (Lsn, LogicalBlockSize),
-			  ExtentLength,
-                          Data
-                          );
-  if (EFI_ERROR (Status)) {
-    goto Exit;
-  }
-
-  //
-  // Check if read extent contains a valid tag identifier for AED.
-  //
-  AllocExtDesc = (UDF_ALLOCATION_EXTENT_DESCRIPTOR *)Data;
-  if (!IS_AED (AllocExtDesc)) {
-    Status = EFI_VOLUME_CORRUPTED;
-    goto Exit;
-  }
-
-  //
-  // Get AED's block offset and its length.
-  //
-  *Offset = (UINT64)(MultU64x32 (Lsn, LogicalBlockSize) +
-		     sizeof (UDF_ALLOCATION_EXTENT_DESCRIPTOR));
-  *Length = AllocExtDesc->LengthOfAllocationDescriptors;
-
-Exit:
-  if (Data) {
-    FreePool (Data);
-  }
-
-  return Status;
-}
-
-//
-// Read Allocation Extent Descriptor into memory.
-//
-EFI_STATUS
-GetAedAdsData (
-  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
-  IN   UDF_VOLUME_INFO                 *Volume,
-  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
-  IN   UDF_FE_RECORDING_FLAGS          RecordingFlags,
-  IN   VOID                            *Ad,
-  OUT  VOID                            **Data,
-  OUT  UINT64                          *Length
-  )
-{
-  EFI_STATUS  Status;
-  UINT64      Offset;
-
-  //
-  // Get AED's offset + length.
-  //
-  Status = GetAedAdsOffset (
-                        BlockIo,
-			DiskIo,
-			Volume,
-			ParentIcb,
-			RecordingFlags,
-			Ad,
-			&Offset,
-			Length
-                        );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  //
-  // Allocate buffer to read in AED's data.
-  //
-  *Data = AllocatePool (*Length);
-  if (!Data) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  //
-  // Read it.
-  //
-  return DiskIo->ReadDisk (
-                        DiskIo,
-			BlockIo->Media->MediaId,
-			Offset,
-			*Length,
-			*Data
-                        );
-}
-
-//
-// Function used to serialise reads of Allocation Descriptors.
-//
-EFI_STATUS
-GrowUpBufferToNextAd (
-  IN      UDF_FE_RECORDING_FLAGS  RecordingFlags,
-  IN      VOID                    *Ad,
-  IN OUT  VOID                    **Buffer,
-  IN      UINT64                  Length
-  )
-{
-  UINT32 ExtentLength;
-
-  ExtentLength = GET_EXTENT_LENGTH (RecordingFlags, Ad);
-
-  if (!*Buffer) {
-    *Buffer = AllocatePool (ExtentLength);
-    if (!*Buffer) {
-      return EFI_OUT_OF_RESOURCES;
-    }
-  } else {
-    *Buffer = ReallocatePool (Length, Length + ExtentLength, *Buffer);
-    if (!*Buffer) {
-      return EFI_OUT_OF_RESOURCES;
-    }
-  }
-
-  return EFI_SUCCESS;
 }
 
 //
@@ -1838,10 +1425,530 @@ Error_Get_Aed:
   return Status;
 }
 
-//
-// Read a directory entry at a time, return its found File Identifier
-// Descriptor and update itself for the next entry.
-//
+/**
+  Resolve a symlink file on an UDF volume.
+
+  @param[in]   BlockIo        BlockIo interface.
+  @param[in]   DiskIo         DiskIo interface.
+  @param[in]   Volume         UDF volume information structure.
+  @param[in]   Parent         Parent file.
+  @param[in]   FileEntryData  FE/EFE structure pointer.
+  @param[out]  File           Resolved file.
+
+  @retval EFI_SUCCESS          Symlink file resolved.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The symlink file was not resolved due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+ResolveSymlink (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   UDF_FILE_INFO          *Parent,
+  IN   VOID                   *FileEntryData,
+  OUT  UDF_FILE_INFO          *File
+  )
+{
+  EFI_STATUS          Status;
+  UDF_READ_FILE_INFO  ReadFileInfo;
+  UINT8               *Data;
+  UINT64              Length;
+  UINT8               *EndData;
+  UDF_PATH_COMPONENT  *PathComp;
+  UINT8               PathCompLength;
+  CHAR16              FileName[UDF_FILENAME_LENGTH];
+  CHAR16              *C;
+  UINTN               Index;
+  UINT8               CompressionId;
+  UDF_FILE_INFO       PreviousFile;
+
+  //
+  // Symlink files on UDF volumes do not contain so much data other than
+  // Path Components which resolves to real filenames, so it's OK to read in
+  // all its data here -- usually the data will be inline with the FE/EFE for
+  // lower filenames.
+  //
+  ReadFileInfo.Flags = READ_FILE_ALLOCATE_AND_READ;
+
+  Status = ReadFile (
+                 BlockIo,
+		 DiskIo,
+		 Volume,
+		 &Parent->FileIdentifierDesc->Icb,
+		 FileEntryData,
+		 &ReadFileInfo
+                 );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Length = ReadFileInfo.ReadLength;
+
+  Data = (UINT8 *)ReadFileInfo.FileData;
+  EndData = Data + Length;
+
+  CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
+
+  for (;;) {
+    PathComp = (UDF_PATH_COMPONENT *)Data;
+
+    PathCompLength = PathComp->LengthOfComponentIdentifier;
+
+    switch (PathComp->ComponentType) {
+      case 1:
+	//
+	// This Path Component specifies the root directory hierarchy subject to
+	// agreement between the originator and recipient of the medium. Skip it.
+	//
+	// Fall through.
+	//
+      case 2:
+	//
+	// "\\." of the current directory. Read next Path Component.
+	//
+	goto Next_Path_Component;
+      case 3:
+	//
+	// ".." (parent directory). Go to it.
+	//
+	CopyMem ((VOID *)FileName, L"..", 6);
+	break;
+      case 4:
+	//
+	// "." (current file). Duplicate both FE/EFE and FID of this file.
+	//
+	DuplicateFe (BlockIo, Volume, PreviousFile.FileEntry, &File->FileEntry);
+	DuplicateFid (PreviousFile.FileIdentifierDesc, &File->FileIdentifierDesc);
+	goto Next_Path_Component;
+      case 5:
+	//
+	// This Path Component identifies an object, either a file or a
+	// directory or an alias.
+	//
+	// Decode it from the compressed data in ComponentIdentifier and find
+	// respective path.
+	//
+	CompressionId = PathComp->ComponentIdentifier[0];
+	if (!IS_VALID_COMPRESSION_ID (CompressionId)) {
+	  return EFI_VOLUME_CORRUPTED;
+	}
+
+	C = FileName;
+	for (Index = 1; Index < PathCompLength; Index++) {
+	  if (CompressionId == 16) {
+	    *C = *(UINT8 *)((UINT8 *)PathComp->ComponentIdentifier +
+			    Index) << 8;
+	    Index++;
+	  } else {
+	    *C = 0;
+	  }
+
+	  if (Index < Length) {
+	    *C |= *(UINT8 *)((UINT8 *)PathComp->ComponentIdentifier + Index);
+	  }
+
+	  C++;
+	}
+
+	*C = L'\0';
+	break;
+    }
+
+    //
+    // Find file from the read filename in symlink file's data.
+    //
+    Status = InternalFindFile (
+                           BlockIo,
+			   DiskIo,
+			   Volume,
+			   FileName,
+			   &PreviousFile,
+			   NULL,
+			   File
+                           );
+    if (EFI_ERROR (Status)) {
+      goto Error_Find_File;
+    }
+
+Next_Path_Component:
+    Data += sizeof (UDF_PATH_COMPONENT) + PathCompLength;
+    if (Data >= EndData) {
+      break;
+    }
+
+    if (CompareMem (
+	  (VOID *)&PreviousFile,
+	  (VOID *)Parent,
+	  sizeof (UDF_FILE_INFO)
+	  )
+      ) {
+      CleanupFileInformation (&PreviousFile);
+    }
+
+    CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
+  }
+
+  //
+  // Unmap the symlink file.
+  //
+  FreePool (ReadFileInfo.FileData);
+
+  return EFI_SUCCESS;
+
+Error_Find_File:
+  if (CompareMem (
+	(VOID *)&PreviousFile,
+	(VOID *)Parent,
+	sizeof (UDF_FILE_INFO)
+	)
+    ) {
+    CleanupFileInformation (&PreviousFile);
+  }
+
+  FreePool (ReadFileInfo.FileData);
+
+  return Status;
+}
+
+/**
+  Find either a File Entry or a Extended File Entry from a given ICB.
+
+  @param[in]   BlockIo    BlockIo interface.
+  @param[in]   DiskIo     DiskIo interface.
+  @param[in]   Volume     UDF volume information structure.
+  @param[in]   Icb        ICB of the FID.
+  @param[out]  FileEntry  File Entry or Extended File Entry.
+
+  @retval EFI_SUCCESS          File Entry or Extended File Entry found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The FE/EFE entry was not found due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+FindFileEntry (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
+  OUT  VOID                            **FileEntry
+  )
+{
+  EFI_STATUS  Status;
+  UINT64      Lsn;
+  UINT32      LogicalBlockSize;
+
+  Lsn               = GetLongAdLsn (Volume, Icb);
+  LogicalBlockSize  = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+
+  *FileEntry = AllocateZeroPool (Volume->FileEntrySize);
+  if (!*FileEntry) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  //
+  // Read extent.
+  //
+  Status = DiskIo->ReadDisk (
+                          DiskIo,
+			  BlockIo->Media->MediaId,
+			  MultU64x32 (Lsn, LogicalBlockSize),
+			  Volume->FileEntrySize,
+			  *FileEntry
+                          );
+  if (EFI_ERROR (Status)) {
+    goto Error_Read_Disk_Blk;
+  }
+
+  //
+  // Check if the read extent contains a valid Tag Identifier for the expected
+  // FE/EFE.
+  //
+  if (!IS_FE (*FileEntry) && !IS_EFE (*FileEntry)) {
+    Status = EFI_VOLUME_CORRUPTED;
+    goto Error_Invalid_Fe;
+  }
+
+  return EFI_SUCCESS;
+
+Error_Invalid_Fe:
+Error_Read_Disk_Blk:
+  FreePool (*FileEntry);
+
+  return Status;
+}
+
+/**
+  Find a file given its absolute path on an UDF volume.
+
+  @param[in]   BlockIo   BlockIo interface.
+  @param[in]   DiskIo    DiskIo interface.
+  @param[in]   Volume    UDF volume information structure.
+  @param[in]   FilePath  File's absolute path.
+  @param[in]   Root      Root directory file.
+  @param[in]   Parent    Parent directory file.
+  @param[out]  File      Found file.
+
+  @retval EFI_SUCCESS          @p FilePath was found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The @p FilePath file was not found due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+FindFile (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   CHAR16                          *FilePath,
+  IN   UDF_FILE_INFO                   *Root,
+  IN   UDF_FILE_INFO                   *Parent,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
+  OUT  UDF_FILE_INFO                   *File
+  )
+{
+  EFI_STATUS     Status;
+  CHAR16         FileName[UDF_FILENAME_LENGTH];
+  CHAR16         *FileNamePointer;
+  UDF_FILE_INFO  PreviousFile;
+  VOID           *FileEntry;
+
+  Status = EFI_NOT_FOUND;
+
+  CopyMem ((VOID *)&PreviousFile, (VOID *)Parent, sizeof (UDF_FILE_INFO));
+  while (*FilePath) {
+    FileNamePointer = FileName;
+    while (*FilePath && *FilePath != L'\\') {
+      *FileNamePointer++ = *FilePath++;
+    }
+
+    *FileNamePointer = L'\0';
+    if (!FileName[0]) {
+      //
+      // Open root directory.
+      //
+      if (!Root) {
+	//
+	// There is no file found for the root directory yet. So, find only its
+	// FID by now.
+	//
+	// See UdfOpenVolume() function.
+	//
+        Status = InternalFindFile (
+                               BlockIo,
+			       DiskIo,
+			       Volume,
+			       L"\\",
+			       &PreviousFile,
+			       Icb,
+			       File
+                               );
+      } else {
+	//
+	// We've already a file pointer (Root) for the root directory. Duplicate
+	// its FE/EFE and FID descriptors.
+	//
+	DuplicateFe (BlockIo, Volume, Root->FileEntry, &File->FileEntry);
+	DuplicateFid (Root->FileIdentifierDesc, &File->FileIdentifierDesc);
+	Status = EFI_SUCCESS;
+      }
+    } else {
+      //
+      // No root directory. Find filename from the current directory.
+      //
+      Status = InternalFindFile (
+                             BlockIo,
+			     DiskIo,
+			     Volume,
+			     FileName,
+			     &PreviousFile,
+			     Icb,
+			     File);
+    }
+
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    //
+    // Find the found file is a sysmlink, then finds its FE/EFE and FID descriptors.
+    //
+    if (IS_FE_SYMLINK (File->FileEntry)) {
+      FreePool ((VOID *)File->FileIdentifierDesc);
+
+      FileEntry = File->FileEntry;
+
+      Status = ResolveSymlink (
+                           BlockIo,
+			   DiskIo,
+			   Volume,
+			   &PreviousFile,
+			   FileEntry,
+			   File
+                           );
+      FreePool (FileEntry);
+      if (EFI_ERROR (Status)) {
+	return Status;
+      }
+    }
+
+    if (CompareMem (
+	  (VOID *)&PreviousFile,
+	  (VOID *)Parent,
+	  sizeof (UDF_FILE_INFO)
+	  )
+      ) {
+      CleanupFileInformation (&PreviousFile);
+    }
+
+    CopyMem ((VOID *)&PreviousFile, (VOID *)File, sizeof (UDF_FILE_INFO));
+    if (*FilePath && *FilePath == L'\\') {
+      FilePath++;
+    }
+  }
+
+  return Status;
+}
+
+/**
+  Find a file from its absolute path on an UDF volume.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+  @param[in]   Volume   UDF volume information structure.
+  @param[in]   File     File information structure.
+  @param[out]  Size     Size of the file.
+
+  @retval EFI_SUCCESS          File size calculated and set in @p Size.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file size was not calculated due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+GetFileSize (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   UDF_FILE_INFO          *File,
+  OUT  UINT64                 *Size
+  )
+{
+  EFI_STATUS          Status;
+  UDF_READ_FILE_INFO  ReadFileInfo;
+
+  ReadFileInfo.Flags = READ_FILE_GET_FILESIZE;
+
+  Status = ReadFile (
+                 BlockIo,
+		 DiskIo,
+		 Volume,
+		 &File->FileIdentifierDesc->Icb,
+		 File->FileEntry,
+		 &ReadFileInfo
+                 );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  *Size = ReadFileInfo.ReadLength;
+
+  return EFI_SUCCESS;
+}
+
+/**
+  Seek a file and read its data into memory on an UDF volume.
+
+  @param[in]      BlockIo       BlockIo interface.
+  @param[in]      DiskIo        DiskIo interface.
+  @param[in]      Volume        UDF volume information structure.
+  @param[in]      File          File information structure.
+  @param[in]      FileSize      Size of the file.
+  @param[in out]  FilePosition  File position.
+  @param[in out]  Buffer        File data.
+  @param[in out]  BufferSize    Read size.
+
+  @retval EFI_SUCCESS          File seeked and read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file's recorded data was not read due to lack
+                               of resources.
+
+**/
+EFI_STATUS
+ReadFileData (
+  IN      EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN      EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN      UDF_VOLUME_INFO        *Volume,
+  IN      UDF_FILE_INFO          *File,
+  IN      UINT64                 FileSize,
+  IN OUT  UINT64                 *FilePosition,
+  IN OUT  VOID                   *Buffer,
+  IN OUT  UINT64                 *BufferSize
+  )
+{
+  EFI_STATUS          Status;
+  UDF_READ_FILE_INFO  ReadFileInfo;
+
+  ReadFileInfo.Flags         = READ_FILE_SEEK_AND_READ;
+  ReadFileInfo.FilePosition  = *FilePosition;
+  ReadFileInfo.FileData      = Buffer;
+  ReadFileInfo.FileDataSize  = *BufferSize;
+  ReadFileInfo.FileSize      = FileSize;
+
+  Status = ReadFile (
+                 BlockIo,
+		 DiskIo,
+		 Volume,
+		 &File->FileIdentifierDesc->Icb,
+		 File->FileEntry,
+		 &ReadFileInfo
+                 );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  *BufferSize = ReadFileInfo.FileDataSize;
+  *FilePosition = ReadFileInfo.FilePosition;
+
+  return EFI_SUCCESS;
+}
+
+/**
+  Read a directory entry at a time on an UDF volume.
+
+  @param[in]      BlockIo        BlockIo interface.
+  @param[in]      DiskIo         DiskIo interface.
+  @param[in]      Volume         UDF volume information structure.
+  @param[in]      ParentIcb      ICB of the parent file.
+  @param[in]      FileEntryData  FE/EFE of the parent file.
+  @param[in out]  ReadDirInfo    Next read directory listing structure
+                                 information.
+  @param[out]     FoundFid       File Identifier Descriptor pointer.
+
+  @retval EFI_SUCCESS          Directory entry read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The directory entry was not read due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 ReadDirectoryEntry (
   IN      EFI_BLOCK_IO_PROTOCOL           *BlockIo,
@@ -1850,7 +1957,7 @@ ReadDirectoryEntry (
   IN      UDF_LONG_ALLOCATION_DESCRIPTOR  *ParentIcb,
   IN      VOID                            *FileEntryData,
   IN OUT  UDF_READ_DIRECTORY_INFO         *ReadDirInfo,
-  OUT     UDF_FILE_IDENTIFIER_DESCRIPTOR  **FoundFileIdentifierDesc
+  OUT     UDF_FILE_IDENTIFIER_DESCRIPTOR  **FoundFid
   )
 {
   EFI_STATUS                      Status;
@@ -1904,14 +2011,130 @@ ReadDirectoryEntry (
     ReadDirInfo->FidOffset += GetFidDescriptorLength (FileIdentifierDesc);
   } while (IS_FID_DELETED_FILE (FileIdentifierDesc));
 
-  DuplicateFid (FileIdentifierDesc, FoundFileIdentifierDesc);
+  DuplicateFid (FileIdentifierDesc, FoundFid);
 
   return EFI_SUCCESS;
 }
 
-//
-// Fill in EFI_FILE_INFO structure with information of a given file.
-//
+/**
+  Read volume information on a medium which contains a valid UDF file system.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+  @param[out]  Volume   UDF volume information structure.
+
+  @retval EFI_SUCCESS          Volume information read.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The volume was not read due to lack of resources.
+
+**/
+EFI_STATUS
+ReadUdfVolumeInformation (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  OUT  UDF_VOLUME_INFO        *Volume
+  )
+{
+  EFI_STATUS Status;
+
+  Status = ReadVolumeFileStructure (
+                                BlockIo,
+                                DiskIo,
+                                Volume
+                                );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = GetFileSetDescriptors (
+                              BlockIo,
+                              DiskIo,
+                              Volume
+                              );
+  if (EFI_ERROR (Status)) {
+    CleanupVolumeInformation (Volume);
+  }
+
+  return Status;
+}
+
+/**
+  Find the root directory on an UDF volume.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+  @param[in]   Volume   UDF volume information structure.
+  @param[out]  File     Root directory file.
+
+  @retval EFI_SUCCESS          Root directory found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The root directory was not found due to lack of
+                               resources.
+
+**/
+EFI_STATUS
+FindRootDirectory (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  OUT  UDF_FILE_INFO          *File
+  )
+{
+  EFI_STATUS     Status;
+  UDF_FILE_INFO  Parent;
+
+  Status = FindFileEntry (
+                      BlockIo,
+		      DiskIo,
+                      Volume,
+                      &Volume->FileSetDescs[0]->RootDirectoryIcb,
+                      &File->FileEntry
+                      );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Parent.FileEntry = File->FileEntry;
+  Parent.FileIdentifierDesc = NULL;
+
+  Status = FindFile (
+                 BlockIo,
+		 DiskIo,
+		 Volume,
+		 L"\\",
+		 NULL,
+		 &Parent,
+		 &Volume->FileSetDescs[0]->RootDirectoryIcb,
+		 File
+                 );
+  if (EFI_ERROR (Status)) {
+    FreePool (File->FileEntry);
+  }
+
+  return Status;
+}
+
+/**
+  Set information about a file on an UDF volume.
+
+  @param[in]      File        File pointer.
+  @param[in]      FileSize    Size of the file.
+  @param[in]      FileName    Filename of the file.
+  @param[in out]  BufferSize  Size of the returned file infomation.
+  @param[out]     Buffer      Data of the returned file information.
+
+  @retval EFI_SUCCESS          File information set.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file information was not set due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 SetFileInfo (
   IN      UDF_FILE_INFO  *File,
@@ -2054,9 +2277,23 @@ SetFileInfo (
   return EFI_SUCCESS;
 }
 
-//
-// Get volume and free space size of an UDF volume.
-//
+/**
+  Get volume and free space size information of an UDF volume.
+
+  @param[in]   BlockIo        BlockIo interface.
+  @param[in]   DiskIo         DiskIo interface.
+  @param[in]   Volume         UDF volume information structure.
+  @param[out]  VolumeSize     Volume size.
+  @param[out]  FreeSpaceSize  Free space size.
+
+  @retval EFI_SUCCESS          Volume and free space size calculated.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The volume and free space size were not
+                               calculated due to lack of resources.
+
+**/
 EFI_STATUS
 GetVolumeSize (
   IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
@@ -2156,9 +2393,21 @@ Read_Next_Sequence:
   return EFI_SUCCESS;
 }
 
-//
-// Check if a medium contains an UDF volume.
-//
+/**
+  Check if medium contains an UDF file system.
+
+  @param[in]   BlockIo  BlockIo interface.
+  @param[in]   DiskIo   DiskIo interface.
+
+  @retval EFI_SUCCESS          UDF file system found.
+  @retval EFI_UNSUPPORTED      UDF file system not found.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The scan was not successful due to lack of
+                               resources.
+
+**/
 EFI_STATUS
 SupportUdfFileSystem (
   IN EFI_BLOCK_IO_PROTOCOL  *BlockIo,
@@ -2279,6 +2528,12 @@ SupportUdfFileSystem (
   return EFI_SUCCESS;
 }
 
+/**
+  Clean up in-memory UDF volume information.
+
+  @param[in] Volume Volume information pointer.
+
+**/
 VOID
 CleanupVolumeInformation (
   IN UDF_VOLUME_INFO *Volume
@@ -2313,6 +2568,12 @@ CleanupVolumeInformation (
   ZeroMem ((VOID *)Volume, sizeof (UDF_VOLUME_INFO));
 }
 
+/**
+  Clean up in-memory UDF file information.
+
+  @param[in] File File information pointer.
+
+**/
 VOID
 CleanupFileInformation (
   IN UDF_FILE_INFO *File

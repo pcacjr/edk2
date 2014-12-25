@@ -89,18 +89,18 @@ GLOBAL_REMOVE_IF_UNREFERENCED EFI_UNICODE_STRING_TABLE mUdfDriverNameTable[] = {
 EFI_STATUS
 EFIAPI
 UdfComponentNameGetDriverName (
-  IN  EFI_COMPONENT_NAME_PROTOCOL  *This,
-  IN  CHAR8                        *Language,
-  OUT CHAR16                       **DriverName
+  IN   EFI_COMPONENT_NAME_PROTOCOL  *This,
+  IN   CHAR8                        *Language,
+  OUT  CHAR16                       **DriverName
   )
 {
   return LookupUnicodeString2 (
-           Language,
-           This->SupportedLanguages,
-           mUdfDriverNameTable,
-           DriverName,
-           (BOOLEAN)(This == &gUdfComponentName)
-           );
+                         Language,
+                         This->SupportedLanguages,
+                         mUdfDriverNameTable,
+                         DriverName,
+                         (BOOLEAN)(This == &gUdfComponentName)
+                         );
 }
 
 /**
@@ -174,11 +174,11 @@ UdfComponentNameGetDriverName (
 EFI_STATUS
 EFIAPI
 UdfComponentNameGetControllerName (
-  IN  EFI_COMPONENT_NAME_PROTOCOL                     *This,
-  IN  EFI_HANDLE                                      ControllerHandle,
-  IN  EFI_HANDLE                                      ChildHandle        OPTIONAL,
-  IN  CHAR8                                           *Language,
-  OUT CHAR16                                          **ControllerName
+  IN   EFI_COMPONENT_NAME_PROTOCOL  *This,
+  IN   EFI_HANDLE                   ControllerHandle,
+  IN   EFI_HANDLE                   ChildHandle OPTIONAL,
+  IN   CHAR8                        *Language,
+  OUT  CHAR16                       **ControllerName
   )
 {
   return EFI_UNSUPPORTED;

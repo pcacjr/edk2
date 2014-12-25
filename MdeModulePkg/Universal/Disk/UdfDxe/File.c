@@ -63,9 +63,6 @@ UdfOpenVolume (
   EFI_STATUS                  Status;
   PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
-  UDF_FILE_SET_DESCRIPTOR     **FileSetDescs;
-  UDF_FILE_INFO               Parent;
-  UDF_FILE_INFO               File;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -77,58 +74,34 @@ UdfOpenVolume (
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (This);
 
   if (!PrivFsData->OpenFiles) {
-    Status = ReadVolumeFileStructure (
-                              PrivFsData->BlockIo,
-			      PrivFsData->DiskIo,
-			      &PrivFsData->Volume
-                              );
+    //
+    // There is no more open files. Read volume information again since it was
+    // cleaned up on the last UdfClose() call.
+    //
+    Status = ReadUdfVolumeInformation (
+                               PrivFsData->BlockIo,
+                               PrivFsData->DiskIo,
+                               &PrivFsData->Volume
+                               );
     if (EFI_ERROR (Status)) {
-      goto Error_Read_Vol_File_Structure;
-    }
-
-    Status = GetFileSetDescriptors (
-                              PrivFsData->BlockIo,
-                              PrivFsData->DiskIo,
-			      &PrivFsData->Volume
-                              );
-    if (EFI_ERROR (Status)) {
-      goto Error_Get_Fsds;
+      goto Error_Read_Udf_Volume;
     }
   }
 
   CleanupFileInformation (&PrivFsData->Root);
 
-  FileSetDescs = PrivFsData->Volume.FileSetDescs;
-
-  Status = FindFileEntry (
+  //
+  // Find root directory file.
+  //
+  Status = FindRootDirectory (
                       PrivFsData->BlockIo,
 		      PrivFsData->DiskIo,
                       &PrivFsData->Volume,
-                      &FileSetDescs[0]->RootDirectoryIcb,
-                      &PrivFsData->Root.FileEntry
+                      &PrivFsData->Root
                       );
   if (EFI_ERROR (Status)) {
-    goto Error_Find_Fe;
+    goto Error_Find_Root_Dir;
   }
-
-  Parent.FileEntry = PrivFsData->Root.FileEntry;
-  Parent.FileIdentifierDesc = NULL;
-
-  Status = FindFile (
-                 PrivFsData->BlockIo,
-		 PrivFsData->DiskIo,
-		 &PrivFsData->Volume,
-		 L"\\",
-		 NULL,
-		 &Parent,
-		 &FileSetDescs[0]->RootDirectoryIcb,
-		 &File
-                 );
-  if (EFI_ERROR (Status)) {
-    goto Error_Find_File;
-  }
-
-  PrivFsData->Root.FileIdentifierDesc = File.FileIdentifierDesc;
 
   PrivFileData = AllocateZeroPool (sizeof (PRIVATE_UDF_FILE_DATA));
   if (!PrivFileData) {
@@ -156,16 +129,12 @@ UdfOpenVolume (
   return EFI_SUCCESS;
 
 Error_Alloc_Priv_File_Data:
-Error_Find_File:
-  FreePool (PrivFileData->File.FileEntry);
+  CleanupFileInformation (&PrivFsData->Root);
 
-Error_Find_Fe:
-Error_Get_Fsds:
+Error_Find_Root_Dir:
   CleanupVolumeInformation (&PrivFsData->Volume);
 
-Error_Read_Vol_File_Structure:
-  FreePool ((VOID *)PrivFileData);
-
+Error_Read_Udf_Volume:
 Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);
 
@@ -538,17 +507,17 @@ Error_Invalid_Params:
 }
 
 /**
-  Close the file handle
+  Close the file handle.
 
-  @param  This          Protocol instance pointer.
+  @param  This Protocol instance pointer.
 
-  @retval EFI_SUCCESS   The file was closed.
+  @retval EFI_SUCCESS The file was closed.
 
 **/
 EFI_STATUS
 EFIAPI
 UdfClose (
-  IN EFI_FILE_PROTOCOL  *This
+  IN EFI_FILE_PROTOCOL *This
   )
 {
   EFI_TPL                     OldTpl;
@@ -647,13 +616,13 @@ UdfWrite (
 }
 
 /**
-  Get a file's current position
+  Get file's current position.
 
-  @param  This            Protocol instance pointer.
-  @param  Position        Byte position from the start of the file.
+  @param  This      Protocol instance pointer.
+  @param  Position  Byte position from the start of the file.
 
-  @retval EFI_SUCCESS     Position was updated.
-  @retval EFI_UNSUPPORTED Seek request for directories is not valid.
+  @retval EFI_SUCCESS      Position was updated.
+  @retval EFI_UNSUPPORTED  Seek request for directories is not valid.
 
 **/
 EFI_STATUS
@@ -663,14 +632,11 @@ UdfGetPosition (
   OUT  UINT64             *Position
   )
 {
-  EFI_STATUS             Status;
-  PRIVATE_UDF_FILE_DATA  *PrivFileData;
+  PRIVATE_UDF_FILE_DATA *PrivFileData;
 
   if (!This || !Position) {
     return EFI_INVALID_PARAMETER;
   }
-
-  Status = EFI_SUCCESS;
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
@@ -678,29 +644,26 @@ UdfGetPosition (
   // As per UEFI spec, if the file handle is a directory, then the current file
   // position has no meaning and the operation is not supported.
   //
-  if (IS_FID_DIRECTORY_FILE (
-	   &PrivFileData->File.FileIdentifierDesc
-	   )
-    ) {
-    Status = EFI_UNSUPPORTED;
-  } else {
-    //
-    // The file is not a directory. So, return its position.
-    //
-    *Position = PrivFileData->FilePosition;
+  if (IS_FID_DIRECTORY_FILE (&PrivFileData->File.FileIdentifierDesc)) {
+    return  EFI_UNSUPPORTED;
   }
 
-  return Status;
+  //
+  // The file is not a directory. So, return its position.
+  //
+  *Position = PrivFileData->FilePosition;
+
+  return EFI_SUCCESS;
 }
 
 /**
-  Set file's current position
+  Set file's current position.
 
-  @param  This            Protocol instance pointer.
-  @param  Position        Byte position from the start of the file.
+  @param  This      Protocol instance pointer.
+  @param  Position  Byte position from the start of the file.
 
-  @retval EFI_SUCCESS     Position was updated.
-  @retval EFI_UNSUPPORTED Seek request for non-zero is not valid on open..
+  @retval EFI_SUCCESS      Position was updated.
+  @retval EFI_UNSUPPORTED  Seek request for non-zero is not valid on open.
 
 **/
 EFI_STATUS
@@ -884,7 +847,7 @@ UdfGetInfo (
 }
 
 /**
-  Set information about a file
+  Set information about a file.
 
   @param  File            Protocol instance pointer.
   @param  InformationType Type of information in Buffer.
@@ -930,7 +893,7 @@ UdfSetInfo (
 EFI_STATUS
 EFIAPI
 UdfFlush (
-  IN EFI_FILE_PROTOCOL  *This
+  IN EFI_FILE_PROTOCOL *This
   )
 {
   return EFI_WRITE_PROTECTED;
