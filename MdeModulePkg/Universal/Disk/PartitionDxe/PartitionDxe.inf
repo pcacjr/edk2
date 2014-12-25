@@ -4,7 +4,7 @@
 #  This module produces the logical Block I/O device that represents
 #  the bytes from Start to End of the Parent Block I/O device.
 #  The partition of physical BlockIo device supported is one of legacy MBR, GPT,
-#  and "El Torito" partitions.
+#  "El Torito" partitions and UDF/ECMA-167 volumes.
 #
 #  Caution: This module requires additional review when modified.
 #  This driver will have external input - disk partition.
@@ -46,12 +46,14 @@
   Mbr.c
   Gpt.c
   ElTorito.c
+  Udf.c
   Partition.c
   Partition.h
 
 
 [Packages]
   MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
 
 
 [LibraryClasses]
@@ -63,6 +65,7 @@
   BaseLib
   UefiDriverEntryPoint
   DebugLib
+  PcdLib
 
 
 [Guids]
@@ -84,6 +87,11 @@
   gEfiDevicePathProtocolGuid
   gEfiDiskIoProtocolGuid                        ## TO_START
   gEfiDiskIo2ProtocolGuid                       ## TO_START
+
+
+[FeaturePcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdUdfFileSystemSupport  ## CONSUMES
+
 
 [UserExtensions.TianoCore."ExtraFiles"]
   PartitionDxeExtra.uni

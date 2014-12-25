@@ -1,8 +1,8 @@
 /** @file
-  Partition driver that produces logical BlockIo devices from a physical 
+  Partition driver that produces logical BlockIo devices from a physical
   BlockIo device. The logical BlockIo devices are based on the format
-  of the raw block devices media. Currently "El Torito CD-ROM", Legacy 
-  MBR, and GPT partition schemes are supported.
+  of the raw block devices media. Currently "El Torito CD-ROM", Legacy
+  MBR, GPT partition and UDF/ECMA-167 volume schemes are supported.
 
 Copyright (c) 2006 - 2011, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials
@@ -15,8 +15,8 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 **/
 
-#ifndef _PARTITION_H_ 
-#define _PARTITION_H_ 
+#ifndef _PARTITION_H_
+#define _PARTITION_H_
 
 #include <Uefi.h>
 #include <Protocol/BlockIo.h>
@@ -38,6 +38,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
 #include <IndustryStandard/Mbr.h>
 #include <IndustryStandard/ElTorito.h>
+#include <IndustryStandard/Udf.h>
 
 
 //
@@ -411,7 +412,7 @@ PartitionInstallElToritoChildHandles (
   @param[in]  BlockIo           Parent BlockIo interface.
   @param[in]  BlockIo2          Parent BlockIo2 interface.
   @param[in]  DevicePath        Parent Device Path.
-   
+
   @retval EFI_SUCCESS       A child handle was added.
   @retval EFI_MEDIA_CHANGED Media change was detected.
   @retval Others            MBR partition was not found.
@@ -419,6 +420,34 @@ PartitionInstallElToritoChildHandles (
 **/
 EFI_STATUS
 PartitionInstallMbrChildHandles (
+  IN  EFI_DRIVER_BINDING_PROTOCOL  *This,
+  IN  EFI_HANDLE                   Handle,
+  IN  EFI_DISK_IO_PROTOCOL         *DiskIo,
+  IN  EFI_DISK_IO2_PROTOCOL        *DiskIo2,
+  IN  EFI_BLOCK_IO_PROTOCOL        *BlockIo,
+  IN  EFI_BLOCK_IO2_PROTOCOL       *BlockIo2,
+  IN  EFI_DEVICE_PATH_PROTOCOL     *DevicePath
+  );
+
+/**
+  Install child handles if the Handle supports UDF/ECMA-167 volume format.
+
+  @param[in]  This        Calling context.
+  @param[in]  Handle      Parent Handle.
+  @param[in]  DiskIo      Parent DiskIo interface.
+  @param[in]  DiskIo2     Parent DiskIo2 interface.
+  @param[in]  BlockIo     Parent BlockIo interface.
+  @param[in]  BlockIo2    Parent BlockIo2 interface.
+  @param[in]  DevicePath  Parent Device Path
+
+
+  @retval EFI_SUCCESS         Child handle(s) was added.
+  @retval EFI_MEDIA_CHANGED   Media changed Detected.
+  @retval other               no child handle was added.
+
+**/
+EFI_STATUS
+PartitionInstallUdfChildHandles (
   IN  EFI_DRIVER_BINDING_PROTOCOL  *This,
   IN  EFI_HANDLE                   Handle,
   IN  EFI_DISK_IO_PROTOCOL         *DiskIo,
