@@ -2,7 +2,7 @@
   Partition driver that produces logical BlockIo devices from a physical
   BlockIo device. The logical BlockIo devices are based on the format
   of the raw block devices media. Currently "El Torito CD-ROM", Legacy
-  MBR, and GPT partition schemes are supported.
+  MBR, GPT partition and UDF/ECMA-167 volume schemes are supported.
 
 Copyright (c) 2006 - 2014, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials
@@ -45,6 +45,7 @@ PARTITION_DETECT_ROUTINE mPartitionDetectRoutineTable[] = {
   PartitionInstallGptChildHandles,
   PartitionInstallElToritoChildHandles,
   PartitionInstallMbrChildHandles,
+  PartitionInstallUdfChildHandles,
   NULL
 };
 

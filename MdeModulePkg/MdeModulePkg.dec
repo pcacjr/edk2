@@ -701,11 +701,19 @@
   # @Prompt Enable S3 performance data support.
   gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwarePerformanceDataTableS3Support|TRUE|BOOLEAN|0x00010064
 
+
   ## Indicates if Serial device uses half hand shake.<BR><BR>
   #   TRUE  - Serial device uses half hand shake.<BR>
   #   FALSE - Serial device doesn't use half hand shake.<BR>
   # @Prompt Enable Serial device Half Hand Shake
   gEfiMdeModulePkgTokenSpaceGuid.PcdSerialUseHalfHandshake|FALSE|BOOLEAN|0x00010073
+
+  ## Indicates if UDF/ECMA-167 filesystem will be supported.<BR><BR>
+  #   TRUE  -  UDF/ECMA-167 filesystem will be supported.<BR>
+  #   FALSE - UDF/ECMA-167 filesystem will not be supported.<BR>
+  # @Prompt Enable UDF/ECMA-167 filesystem support.
+  gEfiMdeModulePkgTokenSpaceGuid.PcdUdfFileSystemSupport|FALSE|BOOLEAN|0x00010069
+
 
 [PcdsFeatureFlag.IA32, PcdsFeatureFlag.X64]
   ## Indicates if DxeIpl should switch to long mode to enter DXE phase.
