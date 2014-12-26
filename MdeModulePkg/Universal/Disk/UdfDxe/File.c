@@ -321,7 +321,196 @@ UdfRead (
   OUT     VOID               *Buffer
   )
 {
-  return EFI_VOLUME_CORRUPTED;
+  EFI_TPL                         OldTpl;
+  EFI_STATUS                      Status;
+  PRIVATE_UDF_FILE_DATA           *PrivFileData;
+  PRIVATE_UDF_SIMPLE_FS_DATA      *PrivFsData;
+  UDF_VOLUME_INFO                 *Volume;
+  UDF_FILE_INFO                   *Parent;
+  UDF_READ_DIRECTORY_INFO         *ReadDirInfo;
+  EFI_BLOCK_IO_PROTOCOL           *BlockIo;
+  EFI_DISK_IO_PROTOCOL            *DiskIo;
+  UDF_FILE_INFO                   FoundFile;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR  *NewFileIdentifierDesc;
+  VOID                            *NewFileEntryData;
+  CHAR16                          FileName[UDF_FILENAME_LENGTH] = { 0 };
+  UINT64                          FileSize;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  if (!This || !BufferSize || (*BufferSize && !Buffer)) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Error_Invalid_Params;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
+
+  BlockIo                = PrivFsData->BlockIo;
+  DiskIo                 = PrivFsData->DiskIo;
+  Volume                 = &PrivFsData->Volume;
+  ReadDirInfo            = &PrivFileData->ReadDirInfo;
+  NewFileIdentifierDesc  = NULL;
+  NewFileEntryData       = NULL;
+
+  Parent = _PARENT_FILE (PrivFileData);
+
+  Status = EFI_VOLUME_CORRUPTED;
+
+  if (IS_FID_NORMAL_FILE (Parent->FileIdentifierDesc)) {
+    if (PrivFileData->FilePosition > PrivFileData->FileSize) {
+      //
+      // File's position is beyond the EOF
+      //
+      Status = EFI_DEVICE_ERROR;
+      goto Error_File_Beyond_The_Eof;
+    }
+
+    if (PrivFileData->FilePosition == PrivFileData->FileSize) {
+      *BufferSize = 0;
+      Status = EFI_SUCCESS;
+      goto Done;
+    }
+
+    Status = ReadFileData (
+                       BlockIo,
+                       DiskIo,
+                       Volume,
+                       Parent,
+                       PrivFileData->FileSize,
+                       &PrivFileData->FilePosition,
+                       Buffer,
+                       BufferSize
+                       );
+  } else if (IS_FID_DIRECTORY_FILE (Parent->FileIdentifierDesc)) {
+    if (!ReadDirInfo->FidOffset && PrivFileData->FilePosition) {
+      Status = EFI_DEVICE_ERROR;
+      *BufferSize = 0;
+      goto Done;
+    }
+
+    for (;;) {
+      Status = ReadDirectoryEntry (
+                               BlockIo,
+			       DiskIo,
+			       Volume,
+			       &Parent->FileIdentifierDesc->Icb,
+			       Parent->FileEntry,
+			       ReadDirInfo,
+			       &NewFileIdentifierDesc
+                               );
+      if (EFI_ERROR (Status)) {
+        if (Status == EFI_DEVICE_ERROR) {
+          FreePool (ReadDirInfo->DirectoryData);
+          ZeroMem ((VOID *)ReadDirInfo, sizeof (UDF_READ_DIRECTORY_INFO));
+
+          *BufferSize = 0;
+          Status = EFI_SUCCESS;
+        }
+
+        goto Done;
+      }
+
+      if (!IS_FID_PARENT_FILE (NewFileIdentifierDesc)) {
+        break;
+      }
+
+      FreePool ((VOID *)NewFileIdentifierDesc);
+    }
+
+    Status = FindFileEntry (
+                        BlockIo,
+                        DiskIo,
+                        Volume,
+                        &NewFileIdentifierDesc->Icb,
+                        &NewFileEntryData
+                        );
+    if (EFI_ERROR (Status)) {
+      goto Error_Find_Fe;
+    }
+
+    if (IS_FE_SYMLINK (NewFileEntryData)) {
+      Status = ResolveSymlink (
+                           BlockIo,
+                           DiskIo,
+                           Volume,
+                           Parent,
+                           NewFileEntryData,
+                           &FoundFile
+                           );
+      if (EFI_ERROR (Status)) {
+        goto Error_Resolve_Symlink;
+      }
+
+      FreePool ((VOID *)NewFileEntryData);
+      NewFileEntryData = FoundFile.FileEntry;
+
+      Status = GetFileNameFromFid (NewFileIdentifierDesc, FileName);
+      if (EFI_ERROR (Status)) {
+        FreePool ((VOID *)FoundFile.FileIdentifierDesc);
+        goto Error_Get_FileName;
+      }
+
+      FreePool ((VOID *)NewFileIdentifierDesc);
+      NewFileIdentifierDesc = FoundFile.FileIdentifierDesc;
+    } else {
+      FoundFile.FileIdentifierDesc  = NewFileIdentifierDesc;
+      FoundFile.FileEntry           = NewFileEntryData;
+
+      Status = GetFileNameFromFid (FoundFile.FileIdentifierDesc, FileName);
+      if (EFI_ERROR (Status)) {
+        goto Error_Get_FileName;
+      }
+    }
+
+    Status = GetFileSize (
+                      BlockIo,
+                      DiskIo,
+                      Volume,
+                      &FoundFile,
+                      &FileSize
+                      );
+    if (EFI_ERROR (Status)) {
+      goto Error_Get_File_Size;
+    }
+
+    Status = SetFileInfo (
+                    &FoundFile,
+                    FileSize,
+                    FileName,
+                    BufferSize,
+                    Buffer
+                    );
+    if (EFI_ERROR (Status)) {
+      goto Error_Set_File_Info;
+    }
+
+    PrivFileData->FilePosition++;
+    Status = EFI_SUCCESS;
+  } else if (IS_FID_DELETED_FILE (Parent->FileIdentifierDesc)) {
+    Status = EFI_DEVICE_ERROR;
+  }
+
+Error_Set_File_Info:
+Error_Get_File_Size:
+Error_Get_FileName:
+Error_Resolve_Symlink:
+  if (NewFileEntryData) {
+    FreePool (NewFileEntryData);
+  }
+
+Error_Find_Fe:
+  if (NewFileIdentifierDesc) {
+    FreePool ((VOID *)NewFileIdentifierDesc);
+  }
+
+Done:
+Error_File_Beyond_The_Eof:
+Error_Invalid_Params:
+  gBS->RestoreTPL (OldTpl);
+
+  return Status;
 }
 
 /**
@@ -450,7 +639,28 @@ UdfGetPosition (
   OUT  UINT64             *Position
   )
 {
-  return EFI_UNSUPPORTED;
+  PRIVATE_UDF_FILE_DATA *PrivFileData;
+
+  if (!This || !Position) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  //
+  // As per UEFI spec, if the file handle is a directory, then the current file
+  // position has no meaning and the operation is not supported.
+  //
+  if (IS_FID_DIRECTORY_FILE (&PrivFileData->File.FileIdentifierDesc)) {
+    return  EFI_UNSUPPORTED;
+  }
+
+  //
+  // The file is not a directory. So, return its position.
+  //
+  *Position = PrivFileData->FilePosition;
+
+  return EFI_SUCCESS;
 }
 
 /**
@@ -470,7 +680,45 @@ UdfSetPosition (
   IN UINT64             Position
   )
 {
-  return EFI_UNSUPPORTED;
+  EFI_STATUS                      Status;
+  PRIVATE_UDF_FILE_DATA           *PrivFileData;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc;
+
+  if (!This) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Status = EFI_UNSUPPORTED;
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  FileIdentifierDesc = PrivFileData->File.FileIdentifierDesc;
+  if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+    //
+    // If the file handle is a directory, the _only_ position that may be set is
+    // zero. This has no effect of starting the read proccess of the directory
+    // entries over.
+    //
+    if (!Position) {
+      PrivFileData->FilePosition = Position;
+      PrivFileData->ReadDirInfo.FidOffset = 0;
+      Status = EFI_SUCCESS;
+    }
+  } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+    //
+    // Seeking to position 0xFFFFFFFFFFFFFFFF causes the current position to be
+    // set to the EOF.
+    //
+    if (Position == 0xFFFFFFFFFFFFFFFF) {
+      PrivFileData->FilePosition = PrivFileData->FileSize - 1;
+    } else {
+      PrivFileData->FilePosition = Position;
+    }
+
+    Status = EFI_SUCCESS;
+  }
+
+  return Status;
 }
 
 /**
