@@ -1032,6 +1032,39 @@ GetVolumeSize (
   );
 
 /**
+  Seek a file and read its data into memory on an UDF volume.
+
+  @param[in]      BlockIo       BlockIo interface.
+  @param[in]      DiskIo        DiskIo interface.
+  @param[in]      Volume        UDF volume information structure.
+  @param[in]      File          File information structure.
+  @param[in]      FileSize      Size of the file.
+  @param[in out]  FilePosition  File position.
+  @param[in out]  Buffer        File data.
+  @param[in out]  BufferSize    Read size.
+
+  @retval EFI_SUCCESS          File seeked and read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file's recorded data was not read due to lack
+                               of resources.
+
+**/
+EFI_STATUS
+ReadFileData (
+  IN      EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN      EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN      UDF_VOLUME_INFO        *Volume,
+  IN      UDF_FILE_INFO          *File,
+  IN      UINT64                 FileSize,
+  IN OUT  UINT64                 *FilePosition,
+  IN OUT  VOID                   *Buffer,
+  IN OUT  UINT64                 *BufferSize
+  );
+
+/**
   Mangle a filename by cutting off trailing whitespaces, "\\", "." and "..".
 
   @param[in] FileName Filename.
