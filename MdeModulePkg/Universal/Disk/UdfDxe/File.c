@@ -179,7 +179,9 @@ UdfOpen (
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
   PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
   CHAR16                      FilePath[UDF_PATH_LENGTH] = { 0 };
+  CHAR16                      TmpFilePath[UDF_PATH_LENGTH] = { 0 };
   UDF_FILE_INFO               File;
+  UDF_FILE_INFO               Parent;
   PRIVATE_UDF_FILE_DATA       *NewPrivFileData;
   CHAR16                      *TempFileName;
 
@@ -187,11 +189,6 @@ UdfOpen (
 
   if (!This || !NewHandle || !FileName) {
     Status = EFI_INVALID_PARAMETER;
-    goto Error_Invalid_Params;
-  }
-
-  if (OpenMode != EFI_FILE_MODE_READ) {
-    Status = EFI_WRITE_PROTECTED;
     goto Error_Invalid_Params;
   }
 
@@ -214,6 +211,64 @@ UdfOpen (
   if (!FilePath[0]) {
     Status = EFI_NOT_FOUND;
     goto Error_Bad_FileName;
+  }
+
+  if (OpenMode & EFI_FILE_MODE_CREATE) {
+    StrCpy (TmpFilePath, FilePath);
+
+    //
+    // Before creating the file, check if its parent directory really exists.
+    //
+    Print (L"UdfOpen: about to create a file\n");
+
+    FileName = FilePath;
+    while ((TempFileName = StrStr (FileName, L"\\"))) {
+      FileName = TempFileName + 1;
+    }
+
+    FilePath[FileName - FilePath - 1] = L'\0';
+
+    Print (L"UdfOpen: check if parent dir (%s) exists\n", FilePath);
+
+    Status = FindFile (
+                   PrivFsData->BlockIo,
+                   PrivFsData->DiskIo,
+                   &PrivFsData->Volume,
+                   FilePath,
+                   _ROOT_FILE (PrivFileData),
+                   _ROOT_FILE (PrivFileData),
+                   &_ROOT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
+                   &Parent
+                   );
+    if (EFI_ERROR (Status)) {
+      Print (L"UdfOpen: %s does not exist\n", FilePath);
+      goto Error_Find_File;
+    }
+
+    if (!IS_FID_DIRECTORY_FILE (Parent.FileIdentifierDesc)) {
+      Status = EFI_NOT_FOUND;
+      goto Error_Find_File;
+    }
+
+    Print (L"UdfOpen: %s is a directory. cool.\n", FilePath);
+    Print (L"UdfOpen: about to create new file in memory...\n");
+
+    Status = CreateFile (
+                     PrivFsData->BlockIo,
+                     PrivFsData->DiskIo,
+                     &PrivFsData->Volume,
+		     TmpFilePath,
+		     Attributes,
+                     &Parent,
+                     &File
+                     );
+    ASSERT (!EFI_ERROR (Status));
+
+    for (;;) {
+      ;
+    }
+
+    StrCpy (FilePath, TmpFilePath);
   }
 
   Status = FindFile (
@@ -619,7 +674,7 @@ UdfWrite (
   IN      VOID               *Buffer
   )
 {
-  return EFI_UNSUPPORTED;
+  return EFI_WRITE_PROTECTED;
 }
 
 /**

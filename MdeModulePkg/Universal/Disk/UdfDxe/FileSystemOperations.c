@@ -217,6 +217,8 @@ StartMainVolumeDescriptorSequence (
 
       Volume->PartitionDescs[Volume->PartitionDescsNo] = PartitionDesc;
       Volume->PartitionDescsNo++;
+    } else if (IS_USD (Buffer)) {
+      Volume->UnallocatedSpaceDescLsn = StartingLsn;
     }
 
     StartingLsn++;
@@ -2590,6 +2592,154 @@ ReadFileData (
 
   *BufferSize    = ReadFileInfo.FileDataSize;
   *FilePosition  = ReadFileInfo.FilePosition;
+
+  return EFI_SUCCESS;
+}
+
+/**
+  Seek a file and read its data into memory on an UDF volume.
+
+  @param[in]      BlockIo       BlockIo interface.
+  @param[in]      DiskIo        DiskIo interface.
+  @param[in]      Volume        UDF volume information structure.
+  @param[in]      File          File information structure.
+  @param[in]      FileSize      Size of the file.
+  @param[in out]  FilePosition  File position.
+  @param[in out]  Buffer        File data.
+  @param[in out]  BufferSize    Read size.
+
+  @retval EFI_SUCCESS          File seeked and read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file's recorded data was not read due to lack
+                               of resources.
+
+**/
+EFI_STATUS
+CreateFile (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   CHAR16                 *FileName,
+  IN   UINT64                 Attributes,
+  IN   UDF_FILE_INFO          *Parent,
+  OUT  UDF_FILE_INFO          *File
+  )
+{
+  UDF_PARTITION_DESCRIPTOR *PartitionDesc;
+  UDF_PARTITION_HEADER_DESCRIPTOR *PartitionHdrDesc;
+#if 0
+  UDF_UNALLOCATED_SPACE_DESCRIPTOR UnallocatedSpaceDesc;
+  UDF_EXTENT_AD *ExtentAd;
+  EFI_STATUS Status;
+#endif
+  UINT32 ExtentLength;
+  UINT32 LogicalBlockSize;
+
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+
+  PartitionDesc = GetPdFromLongAd (Volume, &Parent->FileIdentifierDesc->Icb);
+  if (!PartitionDesc) {
+    return EFI_VOLUME_CORRUPTED;
+  }
+
+  if (CompareMem (
+	PartitionDesc->PartitionContents.Identifier,
+	"+NSR03",
+	5
+	)
+    ) {
+    return EFI_UNSUPPORTED;
+  }
+
+  Print (L"Partition recorded as specified by ECMA-167 standard\n");
+
+  PartitionHdrDesc =
+    (UDF_PARTITION_HEADER_DESCRIPTOR *)&PartitionDesc->PartitionContentsUse[0];
+
+  ExtentLength = GET_EXTENT_LENGTH (
+                           SHORT_ADS_SEQUENCE,
+			   &PartitionHdrDesc->UnallocatedSpaceBitmap
+                           );
+  if (ExtentLength) {
+    Print (L"Partition has Unallocated Space Bitmap\n");
+    Print (L"ExtentLength: %d - ExtentPosition: %d - blocks: %d\n",
+	   ExtentLength,
+	   PartitionDesc->PartitionStartingLocation +
+	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+	   ExtentLength / LogicalBlockSize);
+  }
+
+  ExtentLength = GET_EXTENT_LENGTH (
+                           SHORT_ADS_SEQUENCE,
+			   &PartitionHdrDesc->UnallocatedSpaceTable
+                           );
+  if (ExtentLength) {
+    Print (L"Partition has Unallocated Space Table\n");
+  }
+
+#if 0
+  Status = DiskIo->ReadDisk (
+                          DiskIo,
+                          BlockIo->Media->MediaId,
+                          MultU64x32 (
+                                Volume->UnallocatedSpaceDescLsn,
+                                BlockIo->Media->BlockSize
+                                ),
+                          sizeof (UDF_UNALLOCATED_SPACE_DESCRIPTOR),
+                          (VOID *)&UnallocatedSpaceDesc
+                          );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Print (L"Number of Alloc Descs: %d\n",
+	 UnallocatedSpaceDesc.NumberOfAllocationDescriptors);
+
+  UINTN Length = UnallocatedSpaceDesc.NumberOfAllocationDescriptors *
+                 sizeof (UDF_EXTENT_AD);
+  UINT8 *Data = (UINT8 *)AllocateZeroPool (Length);
+  if (!Data) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  UINT64 Offset;
+
+  Offset = MultU64x32 (
+                 Volume->UnallocatedSpaceDescLsn,
+		 BlockIo->Media->BlockSize
+                 ) +
+           OFFSET_OF (UDF_UNALLOCATED_SPACE_DESCRIPTOR, Data[0]);
+
+  Status = DiskIo->ReadDisk (
+                          DiskIo,
+                          BlockIo->Media->MediaId,
+			  Offset,
+                          Length,
+                          (VOID *)Data
+                          );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  UINTN Count;
+  for (Count = 0; Count < Length / sizeof (UDF_EXTENT_AD); Count++) {
+    ExtentAd = (UDF_EXTENT_AD *)Data;
+
+    if (!ExtentAd->ExtentLength && !ExtentAd->ExtentLocation) {
+      break;
+    }
+
+    Print (L"[%d] Extent AD: Location (%d) - Length (%d)\n",
+	   Count, ExtentAd->ExtentLocation, ExtentAd->ExtentLength);
+
+    Data += sizeof (UDF_EXTENT_AD);
+  }
+
+  Print (L"No more extent ads...\n");
+#endif
 
   return EFI_SUCCESS;
 }

@@ -70,6 +70,10 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 258))
 #define IS_LVID(_Pointer) \
   ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 9))
+#define IS_USD(_Pointer) \
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 7))
+#define IS_SBD(_Pointer) \
+  ((BOOLEAN)(_GET_TAG_ID (_Pointer) == 264))
 
 #define _GET_FILETYPE(_Pointer) \
   (IS_FE (_Pointer) ? \
@@ -224,20 +228,25 @@ typedef struct {
 } UDF_TIMESTAMP;
 
 typedef struct {
-  UINT32          ExtentLength;
-  UINT32          ExtentLocation;
-} UDF_EXTENT_AD;
-
-typedef struct {
   UINT32        LogicalBlockNumber;
   UINT16        PartitionReferenceNumber;
 } UDF_LB_ADDR;
+
+typedef struct {
+  UINT32                            ExtentLength;
+  UINT32                            ExtentPosition;
+} UDF_SHORT_ALLOCATION_DESCRIPTOR;
 
 typedef struct {
   UINT32                           ExtentLength;
   UDF_LB_ADDR                      ExtentLocation;
   UINT8                            ImplementationUse[6];
 } UDF_LONG_ALLOCATION_DESCRIPTOR;
+
+typedef struct {
+  UINT32          ExtentLength;
+  UINT32          ExtentLocation;
+} UDF_EXTENT_AD;
 
 typedef struct {
   UDF_DESCRIPTOR_TAG                 DescriptorTag;
@@ -259,6 +268,22 @@ typedef struct {
   UDF_EXTENT_AD                          ReserveVolumeDescriptorSequenceExtent;
   UINT8                                  Reserved[480];
 } UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER;
+
+typedef struct {
+  UDF_DESCRIPTOR_TAG            DescriptorTag;
+  UINT32                        NumberOfBits;
+  UINT32                        NumberOfBytes;
+  UINT8                         Bitmap[0];
+} UDF_SPACE_BITMAP_DESCRIPTOR;
+
+typedef struct {
+  UDF_SHORT_ALLOCATION_DESCRIPTOR   UnallocatedSpaceTable;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR   UnallocatedSpaceBitmap;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR   PartitionIntegrityTable;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR   FreedSpaceTable;
+  UDF_SHORT_ALLOCATION_DESCRIPTOR   FreedSpaceBitmap;
+  UINT8                             Reserved[88];
+} UDF_PARTITION_HEADER_DESCRIPTOR;
 
 typedef struct {
   UDF_DESCRIPTOR_TAG         DescriptorTag;
@@ -323,11 +348,6 @@ typedef struct {
   UDF_LONG_ALLOCATION_DESCRIPTOR  SystemStreamDirectoryIcb;
   UINT8                           Reserved[32];
 } UDF_FILE_SET_DESCRIPTOR;
-
-typedef struct {
-  UINT32                            ExtentLength;
-  UINT32                            ExtentPosition;
-} UDF_SHORT_ALLOCATION_DESCRIPTOR;
 
 typedef struct {
   UDF_DESCRIPTOR_TAG               DescriptorTag;
@@ -409,6 +429,13 @@ typedef struct {
   UINT8                ComponentIdentifier[0];
 } UDF_PATH_COMPONENT;
 
+typedef struct {
+  UDF_DESCRIPTOR_TAG                 DescriptorTag;
+  UINT32                             VolumeDescriptorSequenceNumber;
+  UINT32                             NumberOfAllocationDescriptors;
+  UINT8                              Data[0];
+} UDF_UNALLOCATED_SPACE_DESCRIPTOR;
+
 #pragma pack()
 
 //
@@ -422,6 +449,7 @@ typedef struct {
   UDF_FILE_SET_DESCRIPTOR        **FileSetDescs;
   UINTN                          FileSetDescsNo;
   UINTN                          FileEntrySize;
+  UINT64                         UnallocatedSpaceDescLsn;
 } UDF_VOLUME_INFO;
 
 typedef struct {
@@ -1062,6 +1090,38 @@ ReadFileData (
   IN OUT  UINT64                 *FilePosition,
   IN OUT  VOID                   *Buffer,
   IN OUT  UINT64                 *BufferSize
+  );
+
+/**
+  Seek a file and read its data into memory on an UDF volume.
+
+  @param[in]      BlockIo       BlockIo interface.
+  @param[in]      DiskIo        DiskIo interface.
+  @param[in]      Volume        UDF volume information structure.
+  @param[in]      File          File information structure.
+  @param[in]      FileSize      Size of the file.
+  @param[in out]  FilePosition  File position.
+  @param[in out]  Buffer        File data.
+  @param[in out]  BufferSize    Read size.
+
+  @retval EFI_SUCCESS          File seeked and read.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file's recorded data was not read due to lack
+                               of resources.
+
+**/
+EFI_STATUS
+CreateFile (
+  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN   UDF_VOLUME_INFO        *Volume,
+  IN   CHAR16                 *FileName,
+  IN   UINT64                 Attributes,
+  IN   UDF_FILE_INFO          *Parent,
+  OUT  UDF_FILE_INFO          *File
   );
 
 /**
