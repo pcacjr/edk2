@@ -1,7 +1,7 @@
 /** @file
   UDF/ECMA-167 filesystem driver.
 
-Copyright (c) 2014 Paulo Alcantara <pcacjr@zytor.com><BR>
+Copyright (c) 2014-2015 Paulo Alcantara <pcacjr@zytor.com><BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -2311,7 +2311,8 @@ SetFileInfo (
   FileInfo = (EFI_FILE_INFO *)Buffer;
   FileInfo->Size         = FileInfoLength;
   FileInfo->Attribute    &= ~EFI_FILE_VALID_ATTR;
-  FileInfo->Attribute    |= EFI_FILE_READ_ONLY;
+
+  //FileInfo->Attribute    |= EFI_FILE_READ_ONLY;
 
   if (IS_FID_DIRECTORY_FILE (File->FileIdentifierDesc)) {
     FileInfo->Attribute |= EFI_FILE_DIRECTORY;
@@ -2596,6 +2597,466 @@ ReadFileData (
   return EFI_SUCCESS;
 }
 
+UINT8
+CalculateTagChecksum (
+  IN VOID *Descriptor
+  )
+{
+  UINT8 *Data = (UINT8 *)Descriptor;
+  UINTN Index;
+  UINTN Count = 0;
+
+  //
+  // Sum up 0-3 bytes.
+  //
+  for (Index = 0; Index < 4; Index++) {
+    Count += Data[Index];
+  }
+
+  //
+  // Sum up 5-15 bytes.
+  //
+  for (Index = 5; Index < 16; Index++) {
+    Count += Data[Index];
+  }
+
+  return (UINT8)(Count % 256);
+}
+
+EFI_STATUS
+GetUnallocatedSpaceLsn (
+  IN EFI_BLOCK_IO_PROTOCOL *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL *DiskIo,
+  IN UDF_VOLUME_INFO *Volume,
+  IN UDF_FILE_IDENTIFIER_DESCRIPTOR *FileIdentifierDesc,
+  OUT UINT32 *LogicalBlockNumber
+  )
+{
+  UINT32 LogicalBlockSize;
+  UDF_PARTITION_DESCRIPTOR *PartitionDesc;
+  UDF_PARTITION_HEADER_DESCRIPTOR *PartitionHdrDesc;
+  UINT32 ExtentLength;
+  EFI_STATUS Status;
+  UINT64 Lsn;
+  UDF_SPACE_BITMAP_DESCRIPTOR SpaceBitmap;
+  UINTN Count;
+  BOOLEAN Done;
+  UINT64 Offset;
+  UINTN BytesToRead;
+  UINTN Bits;
+  UINTN Index;
+  BOOLEAN InvalidateBitmap;
+  UINT8 *Data;
+
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+
+  PartitionDesc = GetPdFromLongAd (Volume, &FileIdentifierDesc->Icb);
+
+  PartitionHdrDesc =
+    (UDF_PARTITION_HEADER_DESCRIPTOR *)&PartitionDesc->PartitionContentsUse[0];
+
+  ExtentLength = GET_EXTENT_LENGTH (
+                         SHORT_ADS_SEQUENCE,
+			 &PartitionHdrDesc->UnallocatedSpaceBitmap
+                         );
+  if (ExtentLength) {
+    Print (L"Partition has Unallocated Space Bitmap\n");
+    Print (L"ExtentLength: %d - ExtentPosition: (%d; %d) - blocks: %d\n",
+	   ExtentLength,
+	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+	   PartitionDesc->PartitionStartingLocation +
+	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+	   ExtentLength / LogicalBlockSize);
+
+    Lsn = GetShortAdLsn (
+                  PartitionDesc,
+		  &PartitionHdrDesc->UnallocatedSpaceBitmap
+                  );
+
+    Status = DiskIo->ReadDisk (
+                            DiskIo,
+                            BlockIo->Media->MediaId,
+                            MultU64x32 (Lsn, LogicalBlockSize),
+                            sizeof (UDF_SPACE_BITMAP_DESCRIPTOR),
+                            (VOID *)&SpaceBitmap
+                         );
+    if (EFI_ERROR (Status)) {
+      return Status;
+    }
+
+    if (!IS_SBD (&SpaceBitmap)) {
+      return EFI_VOLUME_CORRUPTED;
+    }
+
+    Print (L"space bitmap desc: bits no: %d - bytes no: %d\n",
+	   SpaceBitmap.NumberOfBits,
+	   SpaceBitmap.NumberOfBytes);
+
+    Data = (UINT8 *)AllocatePool (LogicalBlockSize);
+    if (!Data) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+
+    Count = 0;
+    Done = FALSE;
+    do {
+      if (Count == SpaceBitmap.NumberOfBytes) {
+        break;
+      }
+
+      if (Count > SpaceBitmap.NumberOfBytes) {
+        BytesToRead = Count - SpaceBitmap.NumberOfBytes;
+        Count = SpaceBitmap.NumberOfBytes - BytesToRead;
+        Done = TRUE;
+      } else {
+        BytesToRead = LogicalBlockSize;
+      }
+
+      Offset = (UINT64)MultU64x32 (Lsn, LogicalBlockSize) +
+               OFFSET_OF (UDF_SPACE_BITMAP_DESCRIPTOR, Bitmap[0]) +
+               Count;
+
+      Status = DiskIo->ReadDisk (
+                              DiskIo,
+                              BlockIo->Media->MediaId,
+                              Offset,
+                              BytesToRead,
+                              (VOID *)Data
+                              );
+      if (EFI_ERROR (Status)) {
+	goto Error_Read_Disk_Blk;
+      }
+
+      InvalidateBitmap = FALSE;
+      for (Index = 0; Index < BytesToRead; Index++) {
+	Bits = 0;
+        while (Bits <= sizeof (UINT8) * 8) {
+          if (Data[Index] & (1 << Bits)) {
+            *LogicalBlockNumber = (Count + Index) * 8 + Bits;
+            Data[Index] &= ~(1 << Bits);
+            InvalidateBitmap = TRUE;
+            Done = TRUE;
+            goto Found_Unallocated_Space;
+          }
+
+          Bits++;
+        }
+      }
+
+Found_Unallocated_Space:
+      if (InvalidateBitmap) {
+        Status = DiskIo->WriteDisk (
+                                 DiskIo,
+                                 BlockIo->Media->MediaId,
+                                 Offset,
+                                 BytesToRead,
+                                 (VOID *)Data
+                                 );
+        if (EFI_ERROR (Status)) {
+	  goto Error_Write_Disk_Blk;
+        }
+
+        Status = BlockIo->FlushBlocks (BlockIo);
+	if (EFI_ERROR (Status)) {
+          goto Error_Flush_Disk_Blks;
+	}
+      }
+
+      Count += LogicalBlockSize;
+    } while (!Done);
+  }
+
+  FreePool ((VOID *)Data);
+
+  return EFI_SUCCESS;
+
+Error_Flush_Disk_Blks:
+Error_Write_Disk_Blk:
+Error_Read_Disk_Blk:
+    FreePool ((VOID *)Data);
+
+    return Status;
+}
+
+EFI_STATUS
+ReadLogicalVolumeIntegrity (
+  IN   EFI_BLOCK_IO_PROTOCOL          *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL           *DiskIo,
+  IN   UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc,
+  OUT  UDF_LOGICAL_VOLUME_INTEGRITY   **LogicalVolInt
+  )
+{
+  UDF_EXTENT_AD  *ExtentAd;
+  EFI_STATUS     Status;
+  UINT64         Lsn;
+
+  ExtentAd = &LogicalVolDesc->IntegritySequenceExtent;
+
+  *LogicalVolInt = AllocatePool (ExtentAd->ExtentLength);
+  if (!*LogicalVolInt) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Lsn = (UINT64)ExtentAd->ExtentLocation;
+
+  Status = DiskIo->ReadDisk (
+                        DiskIo,
+                        BlockIo->Media->MediaId,
+                        MultU64x32 (Lsn, LogicalVolDesc->LogicalBlockSize),
+                        ExtentAd->ExtentLength,
+                        (VOID *)*LogicalVolInt
+                        );
+  if (EFI_ERROR (Status)) {
+    FreePool ((VOID *)*LogicalVolInt);
+  }
+
+  return Status;
+}
+
+EFI_STATUS
+UpdateLogicalVolumeIntegrity (
+  IN EFI_BLOCK_IO_PROTOCOL          *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL           *DiskIo,
+  IN UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc,
+  IN UDF_LOGICAL_VOLUME_INTEGRITY   *LogicalVolInt
+  )
+{
+  UDF_EXTENT_AD  *ExtentAd;
+  UINT64         Lsn;
+
+  ExtentAd = &LogicalVolDesc->IntegritySequenceExtent;
+  Lsn = (UINT64)ExtentAd->ExtentLocation;
+
+  return DiskIo->WriteDisk (
+                        DiskIo,
+                        BlockIo->Media->MediaId,
+			MultU64x32 (Lsn, LogicalVolDesc->LogicalBlockSize),
+                        ExtentAd->ExtentLength,
+                        (VOID *)LogicalVolInt
+                        );
+}
+
+EFI_STATUS
+SetupNewFileEntry (
+  IN EFI_BLOCK_IO_PROTOCOL *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL *DiskIo,
+  IN   UDF_VOLUME_INFO                *Volume,
+  IN OUT UDF_FILE_IDENTIFIER_DESCRIPTOR *FileIdentifierDesc,
+  OUT  UDF_EXTENDED_FILE_ENTRY        **NewFileEntry
+  )
+{
+  UDF_PARTITION_DESCRIPTOR  *PartitionDesc;
+  UDF_EXTENDED_FILE_ENTRY *ExtendedFileEntry;
+  UINT64 Lsn;
+  UDF_LOGICAL_VOLUME_INTEGRITY *LogicalVolInt;
+  UDF_LOGICAL_VOLUME_HEADER_DESCRIPTOR *LogicalVolHdrDesc;
+  UDF_TIMESTAMP                        FeTime;
+  EFI_TIME                             Time;
+  UDF_AD_IMPLEMENTATION_USE            *AdImpUse;
+
+  ExtendedFileEntry = AllocateZeroPool (Volume->FileEntrySize);
+  if (!ExtendedFileEntry) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  ExtendedFileEntry->DescriptorTag.TagIdentifier = 266;
+  ExtendedFileEntry->DescriptorTag.DescriptorVersion = 3;
+  ExtendedFileEntry->DescriptorTag.Reserved = 0;
+  ExtendedFileEntry->DescriptorTag.TagSerialNumber = 1;
+  ExtendedFileEntry->DescriptorTag.DescriptorCRC = 0;
+  ExtendedFileEntry->DescriptorTag.DescriptorCRCLength = 0;
+
+  PartitionDesc = GetPdFromLongAd (Volume, &FileIdentifierDesc->Icb);
+
+  Lsn = GetLongAdLsn (Volume, &FileIdentifierDesc->Icb) -
+        PartitionDesc->PartitionStartingLocation;
+
+  ExtendedFileEntry->DescriptorTag.TagLocation = Lsn;
+  ExtendedFileEntry->DescriptorTag.TagChecksum = CalculateTagChecksum (ExtendedFileEntry);
+
+  if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
+    ExtendedFileEntry->IcbTag.FileType = 4;
+  } else if (IS_FID_NORMAL_FILE (FileIdentifierDesc)) {
+    ExtendedFileEntry->IcbTag.FileType = 5;
+  }
+
+  ExtendedFileEntry->IcbTag.StrategyType = 4;
+  ExtendedFileEntry->IcbTag.StrategyParameter = 0;
+  ExtendedFileEntry->IcbTag.MaximumNumberOfEntries = 1;
+  ExtendedFileEntry->IcbTag.Flags = 0x0003;
+
+  ExtendedFileEntry->ImplementationIdentifier.Flags = 0;
+  CopyMem (
+    &ExtendedFileEntry->ImplementationIdentifier.Identifier,
+    "*Tianocore UEFI UDF",
+    19
+    );
+
+  ExtendedFileEntry->ImplementationIdentifier.IdentifierSuffix[0] = 0x00; // OS class: undefined
+  ExtendedFileEntry->ImplementationIdentifier.IdentifierSuffix[1] = 0x00; // OS identifier: undefined
+  CopyMem (
+    &ExtendedFileEntry->ImplementationIdentifier.IdentifierSuffix[2],
+    "UEFIFS",
+    6
+    );
+
+  gRT->GetTime (&Time, NULL);
+
+  //
+  // Local Time (15-12) + timezone offset (11-0)
+  //
+  FeTime.TypeAndTimezone = (~Time.TimeZone | 0x1) & 0x1FFF;
+
+  FeTime.Year = Time.Year;
+  FeTime.Month = Time.Month;
+  FeTime.Day = Time.Day;
+  FeTime.Hour = Time.Hour;
+  FeTime.Minute = Time.Minute - 2; // FIXME: workaround to shut up error msgs
+  FeTime.Second = Time.Second;
+  FeTime.HundredsOfMicroseconds = Time.Nanosecond;
+  FeTime.Microseconds = Time.Nanosecond * 100;
+  FeTime.Centiseconds = Time.Second / 100;
+
+  CopyMem (&ExtendedFileEntry->AccessTime, &FeTime, sizeof (UDF_TIMESTAMP));
+  CopyMem (&ExtendedFileEntry->ModificationTime, &FeTime, sizeof (UDF_TIMESTAMP));
+  CopyMem (&ExtendedFileEntry->CreationTime, &FeTime, sizeof (UDF_TIMESTAMP));
+  CopyMem (&ExtendedFileEntry->AttributeTime, &FeTime, sizeof (UDF_TIMESTAMP));
+
+  ExtendedFileEntry->Uid = 0xFFFFFFFF;
+  ExtendedFileEntry->Gid = 0xFFFFFFFF;
+
+  ExtendedFileEntry->FileLinkCount = 1;
+
+  ReadLogicalVolumeIntegrity (
+    BlockIo,
+    DiskIo,
+    Volume->LogicalVolDescs[UDF_DEFAULT_LV_NUM],
+    &LogicalVolInt
+    );
+
+  LogicalVolHdrDesc = (UDF_LOGICAL_VOLUME_HEADER_DESCRIPTOR *)(UINTN)LogicalVolInt->LogicalVolumeContentsUse;
+
+  ExtendedFileEntry->UniqueId = LogicalVolHdrDesc->UniqueId++;
+
+  Print (L"FE: UniqueId: 0x%016lx\n", ExtendedFileEntry->UniqueId);
+
+  AdImpUse = (UDF_AD_IMPLEMENTATION_USE *)(UINTN)FileIdentifierDesc->Icb.ImplementationUse;
+
+  AdImpUse->Flags &= ~EXTENT_ERASED;
+  *((UINT32 *)AdImpUse->ImpUse) = ExtendedFileEntry->UniqueId & 0xFFFFFFFF;
+
+  Print (L"FID: UniqueId: 0x%016lx\n", *(UINT32 *)AdImpUse->ImpUse);
+
+  UpdateLogicalVolumeIntegrity (
+    BlockIo,
+    DiskIo,
+    Volume->LogicalVolDescs[UDF_DEFAULT_LV_NUM],
+    LogicalVolInt
+    );
+
+  FreePool ((VOID *)LogicalVolInt);
+
+  *NewFileEntry = ExtendedFileEntry;
+
+  return EFI_SUCCESS;
+}
+
+EFI_STATUS
+SetupNewFileIdentifierDesc (
+  IN EFI_BLOCK_IO_PROTOCOL *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL *DiskIo,
+  IN   UDF_VOLUME_INFO                *Volume,
+  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR *ParentFid,
+  IN   CHAR16                         *FileName,
+  IN   UINT16                         Attributes,
+  OUT  UDF_FILE_IDENTIFIER_DESCRIPTOR *NewFid
+  )
+{
+  UDF_PARTITION_DESCRIPTOR  *PartitionDesc;
+  UINT64                    Lsn;
+  UINTN                     Count;
+  EFI_STATUS                Status;
+  UINT8                     CompressionId;
+  UINT8                     *FileNamePointer;
+  UINT8                     *FidFileNamePointer;
+
+  NewFid->DescriptorTag.TagIdentifier = 257;
+  NewFid->DescriptorTag.DescriptorVersion = 3;
+  NewFid->DescriptorTag.Reserved = 0;
+  NewFid->DescriptorTag.TagSerialNumber = 1;
+  NewFid->DescriptorTag.DescriptorCRC = 0;
+  NewFid->DescriptorTag.DescriptorCRCLength = 0;
+
+  PartitionDesc = GetPdFromLongAd (Volume, &ParentFid->Icb);
+
+  Lsn = GetLongAdLsn (Volume, &ParentFid->Icb) -
+        PartitionDesc->PartitionStartingLocation;
+
+  NewFid->DescriptorTag.TagLocation = Lsn;
+  NewFid->DescriptorTag.TagChecksum = CalculateTagChecksum (NewFid);
+
+  NewFid->FileVersionNumber = 1;
+
+  if (Attributes & EFI_FILE_DIRECTORY) {
+    NewFid->FileCharacteristics |= DIRECTORY_FILE;
+  } else {
+    NewFid->FileCharacteristics &= ~(DIRECTORY_FILE | PARENT_FILE);
+  }
+
+  NewFid->LengthOfImplementationUse = 0;
+
+  CompressionId = FID_COMPRESSION_ID (ParentFid);
+  *((UINT8 *)NewFid->Data) = CompressionId;
+
+  Print (L"Parent fid: comp id: %d\n", CompressionId);
+
+  NewFid->LengthOfFileIdentifier = StrSize (FileName);
+  if (CompressionId == 8) {
+    NewFid->LengthOfFileIdentifier /= 2;
+  }
+
+  FileNamePointer = (UINT8 *)FileName;
+  FidFileNamePointer = (UINT8 *)((UINTN)NewFid->Data + NewFid->LengthOfImplementationUse + 1);
+  while (*FileNamePointer) {
+    if (CompressionId == 16) {
+      *FidFileNamePointer++ = *FileNamePointer++;
+      *FidFileNamePointer++ = *FileNamePointer++;
+    } else {
+      *FidFileNamePointer++ = *FileNamePointer++;
+      if (*FileNamePointer) {
+	*FidFileNamePointer++ = *FileNamePointer;
+      }
+
+      FileNamePointer++;
+    }
+  }
+
+  Status = GetUnallocatedSpaceLsn (
+			       BlockIo,
+			       DiskIo,
+			       Volume,
+			       ParentFid,
+			       &NewFid->Icb.ExtentLocation.LogicalBlockNumber
+			       );
+  ASSERT (!EFI_ERROR (Status));
+
+  Print (
+      L"--> unallocated extent: %d\n",
+      NewFid->Icb.ExtentLocation.LogicalBlockNumber
+      );
+
+  Count = Volume->FileEntrySize / LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+  while (Count--) {
+    GetUnallocatedSpaceLsn (BlockIo, DiskIo, Volume, ParentFid, (UINT32 *)&Lsn);
+  }
+
+  NewFid->Icb.ExtentLocation.PartitionReferenceNumber =
+                                           PartitionDesc->PartitionNumber;
+  NewFid->Icb.ExtentLength = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+
+  return EFI_SUCCESS;
+}
+
 /**
   Seek a file and read its data into memory on an UDF volume.
 
@@ -2619,26 +3080,172 @@ ReadFileData (
 **/
 EFI_STATUS
 CreateFile (
-  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
-  IN   UDF_VOLUME_INFO        *Volume,
-  IN   CHAR16                 *FileName,
-  IN   UINT64                 Attributes,
-  IN   UDF_FILE_INFO          *Parent,
-  OUT  UDF_FILE_INFO          *File
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   CHAR16                          *FileName,
+  IN   UINT64                          Attributes,
+  IN   UDF_FILE_INFO                   *Root,
+  IN   UDF_FILE_INFO                   *Parent,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
+  OUT  UDF_FILE_INFO                   *File
   )
 {
   UDF_PARTITION_DESCRIPTOR *PartitionDesc;
   UDF_PARTITION_HEADER_DESCRIPTOR *PartitionHdrDesc;
-#if 0
-  UDF_UNALLOCATED_SPACE_DESCRIPTOR UnallocatedSpaceDesc;
-  UDF_EXTENT_AD *ExtentAd;
-  EFI_STATUS Status;
-#endif
   UINT32 ExtentLength;
   UINT32 LogicalBlockSize;
+  CHAR16 TmpFileName[UDF_FILENAME_LENGTH] = { 0 };
+  CHAR16 *TmpFileNamePointer;
+  UDF_FILE_INFO TmpFile;
+  EFI_STATUS Status;
+  UDF_FE_RECORDING_FLAGS  RecordingFlags;
+
+  Print (L"CreateFile: in\n");
+
+  Print (L"CreateFile: about to a create a new file: %s\n", FileName);
+
+  StrCpy (TmpFileName, FileName);
+  StrCat (TmpFileName, L"\\..");
+
+  MangleFileName (TmpFileName);
+
+  if (StrCmp (TmpFileName, L"\\test")) {
+    return EFI_SUCCESS;
+  }
+
+  Print (L"CreateFile: check if parent dir (%s) exists\n", TmpFileName);
+
+  Status = FindFile (
+                 BlockIo,
+                 DiskIo,
+                 Volume,
+                 TmpFileName,
+                 Root,
+                 Parent,
+                 Icb,
+                 &TmpFile
+                 );
+  if (EFI_ERROR (Status)) {
+    Print (L"CreateFile: %s does not exist\n", TmpFileName);
+    return Status;
+  }
+
+  if (!IS_FID_DIRECTORY_FILE (TmpFile.FileIdentifierDesc)) {
+    return EFI_NOT_FOUND;
+  }
+
+  while ((TmpFileNamePointer = StrStr (FileName, L"\\"))) {
+    FileName = TmpFileNamePointer + 1;
+  }
+
+  Print (L"CreateFile: %s is a directory. cool.\n", TmpFileName);
+  Print (L"CreateFile: about to create new file (%s)in memory...\n",
+	 FileName);
 
   LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+
+  RecordingFlags = GET_FE_RECORDING_FLAGS (TmpFile.FileEntry);
+  switch (RecordingFlags) {
+    case INLINE_DATA:
+      Print (L"inline data\n");
+
+      UDF_FILE_IDENTIFIER_DESCRIPTOR *NewFid;
+
+      UINT64 Lsn;
+
+      Lsn = GetLongAdLsn (Volume, &TmpFile.FileIdentifierDesc->Icb);
+
+      NewFid = AllocateZeroPool (LogicalBlockSize);
+      ASSERT (NewFid);
+
+      (VOID)SetupNewFileIdentifierDesc (BlockIo, DiskIo,
+					Volume, TmpFile.FileIdentifierDesc,
+					FileName, Attributes, NewFid);
+
+      UDF_EXTENDED_FILE_ENTRY *NewFileEntry;
+
+      SetupNewFileEntry (BlockIo, DiskIo, Volume, NewFid, &NewFileEntry);
+
+      VOID *Data;
+      UINTN Length;
+      GetFileEntryData (TmpFile.FileEntry, &Data, &Length);
+
+      Print (L"New FID's len: %d\n", GetFidDescriptorLength (NewFid));
+      {
+	CHAR16 Foo[UDF_FILENAME_LENGTH] = { 0 };
+
+	Status = GetFileNameFromFid (NewFid, Foo);
+	Print (L"new fid's filename: %s\n", Foo);
+      }
+
+      if (Length + GetFidDescriptorLength (NewFid) < LogicalBlockSize) {
+	Print (L"New file will be inlined...\n");
+	CopyMem (
+	  (VOID *)((UINT8 *)Data + Length),
+	  (VOID *)NewFid,
+	  GetFidDescriptorLength (NewFid)
+	  );
+      }
+
+      UDF_FILE_ENTRY *FileEntry;
+      UDF_EXTENDED_FILE_ENTRY *ExtendedFileEntry;
+
+      if (IS_EFE (TmpFile.FileEntry)) {
+	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)TmpFile.FileEntry;
+
+	Print (L"parent: strategy type: %d\n", ExtendedFileEntry->IcbTag.StrategyType);
+	Print (L"parent: strategy param: %d\n", ExtendedFileEntry->IcbTag.StrategyParameter);
+	Print (L"parent: flags: 0x%x\n", ExtendedFileEntry->IcbTag.Flags);
+	Print (L"parent: max: %d\n", ExtendedFileEntry->IcbTag.MaximumNumberOfEntries);
+
+	ExtendedFileEntry->InformationLength += GetFidDescriptorLength (NewFid);
+	ExtendedFileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
+      } else if (IS_FE (TmpFile.FileEntry)) {
+	FileEntry = (UDF_FILE_ENTRY *)TmpFile.FileEntry;
+
+	FileEntry->InformationLength += GetFidDescriptorLength (NewFid);
+	FileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
+      }
+
+      Status = DiskIo->WriteDisk (
+	DiskIo,
+	BlockIo->Media->MediaId,
+	MultU64x32 (Lsn, LogicalBlockSize),
+	Volume->FileEntrySize,
+	TmpFile.FileEntry
+	);
+      if (EFI_ERROR (Status)) {
+	return Status;
+      }
+
+      Lsn = GetLongAdLsn (Volume, &NewFid->Icb);
+
+      Status = DiskIo->WriteDisk (
+				  DiskIo,
+				  BlockIo->Media->MediaId,
+				  MultU64x32 (Lsn, LogicalBlockSize),
+				  Volume->FileEntrySize,
+				  (VOID *)NewFileEntry
+				  );
+      if (EFI_ERROR (Status)) {
+	return Status;
+      }
+
+      Status = BlockIo->FlushBlocks (BlockIo);
+
+      Print (L"---> done\n");
+
+      break;
+    case SHORT_ADS_SEQUENCE:
+      Print (L"short ads sequence\n");
+      break;
+    case LONG_ADS_SEQUENCE:
+      Print (L"long ads sequence\n");
+      break;
+    case EXTENDED_ADS_SEQUENCE:
+      break;
+  }
 
   PartitionDesc = GetPdFromLongAd (Volume, &Parent->FileIdentifierDesc->Icb);
   if (!PartitionDesc) {
@@ -2665,8 +3272,9 @@ CreateFile (
                            );
   if (ExtentLength) {
     Print (L"Partition has Unallocated Space Bitmap\n");
-    Print (L"ExtentLength: %d - ExtentPosition: %d - blocks: %d\n",
+    Print (L"ExtentLength: %d - ExtentPosition: (%d; %d) - blocks: %d\n",
 	   ExtentLength,
+	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
 	   PartitionDesc->PartitionStartingLocation +
 	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
 	   ExtentLength / LogicalBlockSize);
@@ -2680,66 +3288,7 @@ CreateFile (
     Print (L"Partition has Unallocated Space Table\n");
   }
 
-#if 0
-  Status = DiskIo->ReadDisk (
-                          DiskIo,
-                          BlockIo->Media->MediaId,
-                          MultU64x32 (
-                                Volume->UnallocatedSpaceDescLsn,
-                                BlockIo->Media->BlockSize
-                                ),
-                          sizeof (UDF_UNALLOCATED_SPACE_DESCRIPTOR),
-                          (VOID *)&UnallocatedSpaceDesc
-                          );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Print (L"Number of Alloc Descs: %d\n",
-	 UnallocatedSpaceDesc.NumberOfAllocationDescriptors);
-
-  UINTN Length = UnallocatedSpaceDesc.NumberOfAllocationDescriptors *
-                 sizeof (UDF_EXTENT_AD);
-  UINT8 *Data = (UINT8 *)AllocateZeroPool (Length);
-  if (!Data) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  UINT64 Offset;
-
-  Offset = MultU64x32 (
-                 Volume->UnallocatedSpaceDescLsn,
-		 BlockIo->Media->BlockSize
-                 ) +
-           OFFSET_OF (UDF_UNALLOCATED_SPACE_DESCRIPTOR, Data[0]);
-
-  Status = DiskIo->ReadDisk (
-                          DiskIo,
-                          BlockIo->Media->MediaId,
-			  Offset,
-                          Length,
-                          (VOID *)Data
-                          );
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  UINTN Count;
-  for (Count = 0; Count < Length / sizeof (UDF_EXTENT_AD); Count++) {
-    ExtentAd = (UDF_EXTENT_AD *)Data;
-
-    if (!ExtentAd->ExtentLength && !ExtentAd->ExtentLocation) {
-      break;
-    }
-
-    Print (L"[%d] Extent AD: Location (%d) - Length (%d)\n",
-	   Count, ExtentAd->ExtentLocation, ExtentAd->ExtentLength);
-
-    Data += sizeof (UDF_EXTENT_AD);
-  }
-
-  Print (L"No more extent ads...\n");
-#endif
+  Print (L"CreatFile: out: %r\n", EFI_SUCCESS);
 
   return EFI_SUCCESS;
 }

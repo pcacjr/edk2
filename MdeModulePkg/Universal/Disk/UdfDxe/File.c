@@ -1,7 +1,7 @@
 /** @file
   UDF/ECMA-167 filesystem driver.
 
-Copyright (c) 2014 Paulo Alcantara <pcacjr@zytor.com><BR>
+Copyright (c) 2014-2015 Paulo Alcantara <pcacjr@zytor.com><BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -179,11 +179,10 @@ UdfOpen (
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
   PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
   CHAR16                      FilePath[UDF_PATH_LENGTH] = { 0 };
-  CHAR16                      TmpFilePath[UDF_PATH_LENGTH] = { 0 };
   UDF_FILE_INFO               File;
-  UDF_FILE_INFO               Parent;
   PRIVATE_UDF_FILE_DATA       *NewPrivFileData;
   CHAR16                      *TempFileName;
+  UDF_FILE_INFO               NewFile;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -214,63 +213,25 @@ UdfOpen (
   }
 
   if (OpenMode & EFI_FILE_MODE_CREATE) {
-    StrCpy (TmpFilePath, FilePath);
-
-    //
-    // Before creating the file, check if its parent directory really exists.
-    //
-    Print (L"UdfOpen: about to create a file\n");
-
-    FileName = FilePath;
-    while ((TempFileName = StrStr (FileName, L"\\"))) {
-      FileName = TempFileName + 1;
-    }
-
-    FilePath[FileName - FilePath - 1] = L'\0';
-
-    Print (L"UdfOpen: check if parent dir (%s) exists\n", FilePath);
-
-    Status = FindFile (
-                   PrivFsData->BlockIo,
-                   PrivFsData->DiskIo,
-                   &PrivFsData->Volume,
-                   FilePath,
-                   _ROOT_FILE (PrivFileData),
-                   _ROOT_FILE (PrivFileData),
-                   &_ROOT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
-                   &Parent
-                   );
-    if (EFI_ERROR (Status)) {
-      Print (L"UdfOpen: %s does not exist\n", FilePath);
-      goto Error_Find_File;
-    }
-
-    if (!IS_FID_DIRECTORY_FILE (Parent.FileIdentifierDesc)) {
-      Status = EFI_NOT_FOUND;
-      goto Error_Find_File;
-    }
-
-    Print (L"UdfOpen: %s is a directory. cool.\n", FilePath);
-    Print (L"UdfOpen: about to create new file in memory...\n");
-
     Status = CreateFile (
                      PrivFsData->BlockIo,
                      PrivFsData->DiskIo,
                      &PrivFsData->Volume,
-		     TmpFilePath,
+		     FilePath,
 		     Attributes,
-                     &Parent,
-                     &File
+		     _ROOT_FILE (PrivFileData),
+		     _ROOT_FILE (PrivFileData),
+		     &_ROOT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
+                     &NewFile
                      );
-    ASSERT (!EFI_ERROR (Status));
+    goto Go_To_Here;
 
     for (;;) {
       ;
     }
-
-    StrCpy (FilePath, TmpFilePath);
   }
 
+Go_To_Here:
   Status = FindFile (
                  PrivFsData->BlockIo,
                  PrivFsData->DiskIo,
@@ -635,7 +596,7 @@ UdfDelete (
   IN EFI_FILE_PROTOCOL  *This
   )
 {
-  PRIVATE_UDF_FILE_DATA *PrivFileData;
+  PRIVATE_UDF_FILE_DATA  *PrivFileData;
 
   if (!This) {
     return EFI_INVALID_PARAMETER;
@@ -643,7 +604,7 @@ UdfDelete (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  (VOID)PrivFileData->FileIo.Close(This);
+  (VOID)PrivFileData->FileIo.Close (This);
 
   return EFI_WARN_DELETE_FAILURE;
 }
@@ -894,7 +855,8 @@ UdfGetInfo (
     }
 
     FileSystemInfo->Size        = FileSystemInfoLength;
-    FileSystemInfo->ReadOnly    = TRUE;
+    //FileSystemInfo->ReadOnly    = TRUE;
+    FileSystemInfo->ReadOnly    = FALSE;
     FileSystemInfo->BlockSize   = LV_BLOCK_SIZE (
                                           &PrivFsData->Volume,
                                           UDF_DEFAULT_LV_NUM

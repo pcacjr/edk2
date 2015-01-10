@@ -1,7 +1,7 @@
 /** @file
   UDF/ECMA-167 filesystem driver.
 
-Copyright (c) 2014 Paulo Alcantara <pcacjr@zytor.com><BR>
+Copyright (c) 2014-2015 Paulo Alcantara <pcacjr@zytor.com><BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -35,6 +35,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/DevicePathLib.h>
 
 #define UDF_LOGICAL_SECTOR_SHIFT        11
@@ -158,6 +159,11 @@ typedef enum {
 #define LV_BLOCK_SIZE(_Vol, _LvNum) \
   (_Vol)->LogicalVolDescs[(_LvNum)]->LogicalBlockSize
 
+#define FID_COMPRESSION_ID(_Fid) \
+  (*((UINT8 *)(UINTN)(_Fid)->Data + (_Fid)->LengthOfImplementationUse))
+
+#define EXTENT_ERASED 0x01
+
 #define UDF_STANDARD_IDENTIFIER_LENGTH   5
 
 #pragma pack(1)
@@ -244,6 +250,11 @@ typedef struct {
 } UDF_LONG_ALLOCATION_DESCRIPTOR;
 
 typedef struct {
+  UINT16                      Flags;
+  UINT8                       ImpUse[4];
+} UDF_AD_IMPLEMENTATION_USE;
+
+typedef struct {
   UINT32          ExtentLength;
   UINT32          ExtentLocation;
 } UDF_EXTENT_AD;
@@ -326,6 +337,11 @@ typedef struct {
   UINT32                         LengthOfImplementationUse;
   UINT8                          Data[0];
 } UDF_LOGICAL_VOLUME_INTEGRITY;
+
+typedef struct {
+  UINT64                                 UniqueId;
+  UINT8                                  Reserved[24];
+} UDF_LOGICAL_VOLUME_HEADER_DESCRIPTOR;
 
 typedef struct {
   UDF_DESCRIPTOR_TAG              DescriptorTag;
@@ -1115,13 +1131,15 @@ ReadFileData (
 **/
 EFI_STATUS
 CreateFile (
-  IN   EFI_BLOCK_IO_PROTOCOL  *BlockIo,
-  IN   EFI_DISK_IO_PROTOCOL   *DiskIo,
-  IN   UDF_VOLUME_INFO        *Volume,
-  IN   CHAR16                 *FileName,
-  IN   UINT64                 Attributes,
-  IN   UDF_FILE_INFO          *Parent,
-  OUT  UDF_FILE_INFO          *File
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   CHAR16                          *FileName,
+  IN   UINT64                          Attributes,
+  IN   UDF_FILE_INFO                   *Root,
+  IN   UDF_FILE_INFO                   *Parent,
+  IN   UDF_LONG_ALLOCATION_DESCRIPTOR  *Icb,
+  OUT  UDF_FILE_INFO                   *File
   );
 
 /**
