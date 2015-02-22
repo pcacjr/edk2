@@ -217,21 +217,18 @@ UdfOpen (
                      PrivFsData->BlockIo,
                      PrivFsData->DiskIo,
                      &PrivFsData->Volume,
-		     FilePath,
-		     Attributes,
-		     _ROOT_FILE (PrivFileData),
-		     _ROOT_FILE (PrivFileData),
-		     &_ROOT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
+                     FilePath,
+                     Attributes,
+                     _ROOT_FILE (PrivFileData),
+                     _ROOT_FILE (PrivFileData),
+                     &_ROOT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
                      &NewFile
                      );
-    goto Go_To_Here;
-
-    for (;;) {
-      ;
+    if (EFI_ERROR (Status)) {
+      goto Error_Create_File;
     }
   }
 
-Go_To_Here:
   Status = FindFile (
                  PrivFsData->BlockIo,
                  PrivFsData->DiskIo,
@@ -308,6 +305,7 @@ Error_Alloc_New_Priv_File_Data:
   CleanupFileInformation (&File);
 
 Error_Find_File:
+Error_Create_File:
 Error_Bad_FileName:
 Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);
@@ -409,12 +407,12 @@ UdfRead (
     for (;;) {
       Status = ReadDirectoryEntry (
                                BlockIo,
-			       DiskIo,
-			       Volume,
-			       &Parent->FileIdentifierDesc->Icb,
-			       Parent->FileEntry,
-			       ReadDirInfo,
-			       &NewFileIdentifierDesc
+                               DiskIo,
+                               Volume,
+                               &Parent->FileIdentifierDesc->Icb,
+                               Parent->FileEntry,
+                               ReadDirInfo,
+                               &NewFileIdentifierDesc
                                );
       if (EFI_ERROR (Status)) {
         if (Status == EFI_DEVICE_ERROR) {

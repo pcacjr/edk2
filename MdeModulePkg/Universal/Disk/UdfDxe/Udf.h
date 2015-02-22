@@ -107,7 +107,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
   ((BOOLEAN)(_GET_FILE_CHARS (_Pointer) & PARENT_FILE))
 #define IS_FID_NORMAL_FILE(_Pointer) \
   ((BOOLEAN)(!IS_FID_DIRECTORY_FILE (_Pointer) && \
-	     !IS_FID_PARENT_FILE (_Pointer)))
+             !IS_FID_PARENT_FILE (_Pointer)))
 
 typedef enum {
   SHORT_ADS_SEQUENCE,
@@ -118,8 +118,8 @@ typedef enum {
 
 #define GET_FE_RECORDING_FLAGS(_Fe) \
   ((UDF_FE_RECORDING_FLAGS)((UDF_ICB_TAG *)( \
-			      (UINT8 *)(_Fe) + \
-			      sizeof (UDF_DESCRIPTOR_TAG)))->Flags & 0x07)
+                              (UINT8 *)(_Fe) + \
+                              sizeof (UDF_DESCRIPTOR_TAG)))->Flags & 0x07)
 
 typedef enum {
   EXTENT_RECORDED_AND_ALLOCATED,
@@ -136,16 +136,16 @@ typedef enum {
 #define GET_EXTENT_FLAGS(_RecFlags, _Ad) \
   ((_RecFlags) == SHORT_ADS_SEQUENCE ? \
    ((UDF_EXTENT_FLAGS)((((UDF_SHORT_ALLOCATION_DESCRIPTOR *)(_Ad))->ExtentLength >> \
-			30) & 0x3)) : \
+                        30) & 0x3)) : \
    ((UDF_EXTENT_FLAGS)((((UDF_LONG_ALLOCATION_DESCRIPTOR *)(_Ad))->ExtentLength >> \
-			30) & 0x3)))
+                        30) & 0x3)))
 
 #define GET_EXTENT_LENGTH(_RecFlags, _Ad) \
   ((_RecFlags) == SHORT_ADS_SEQUENCE ? \
    ((UINT32)((((UDF_SHORT_ALLOCATION_DESCRIPTOR *)(_Ad))->ExtentLength & \
-	      ~0xC0000000UL))) : \
+              ~0xC0000000UL))) : \
    ((UINT32)((((UDF_LONG_ALLOCATION_DESCRIPTOR *)(_Ad))->ExtentLength & \
-	      ~0xC0000000UL))))
+              ~0xC0000000UL))))
 
 #define UDF_FILENAME_LENGTH  128
 #define UDF_PATH_LENGTH      512
@@ -335,6 +335,8 @@ typedef struct {
   UINT8                          LogicalVolumeContentsUse[32];
   UINT32                         NumberOfPartitions;
   UINT32                         LengthOfImplementationUse;
+  UINT32                         FreeSpaceTable;
+  UINT32                         SizeTable;
   UINT8                          Data[0];
 } UDF_LOGICAL_VOLUME_INTEGRITY;
 
@@ -1153,6 +1155,21 @@ CreateFile (
 CHAR16 *
 MangleFileName (
   IN CHAR16        *FileName
+  );
+
+/**
+  Calculate the CRC-ITU-T for the given data
+
+  @param[in] Data    Data buffer.
+  @param[in] Length  Length of the data.
+
+  @retval @p CRC-ITU-T calculated.
+
+**/
+UINT16
+CalculateCrc (
+  IN VOID   *Data,
+  IN UINTN  Length
   );
 
 /**

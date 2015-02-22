@@ -616,7 +616,7 @@
   #   TRUE  -  UDF/ECMA-167 filesystem will be supported.<BR>
   #   FALSE - UDF/ECMA-167 filesystem will not be supported.<BR>
   # @Prompt Enable UDF/ECMA-167 filesystem support.
-  gEfiMdeModulePkgTokenSpaceGuid.PcdUdfFileSystemSupport|FALSE|BOOLEAN|0x00010069
+  gEfiMdeModulePkgTokenSpaceGuid.PcdUdfFileSystemSupport|FALSE|BOOLEAN|0x00010071
 
 [PcdsFeatureFlag.IA32, PcdsFeatureFlag.X64]
   ## Indicates if DxeIpl should switch to long mode to enter DXE phase.

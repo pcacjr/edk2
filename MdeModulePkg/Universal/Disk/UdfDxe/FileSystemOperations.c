@@ -182,18 +182,18 @@ StartMainVolumeDescriptorSequence (
       // Found a Logical Volume Descriptor.
       //
       LogicalVolDesc =
-	(UDF_LOGICAL_VOLUME_DESCRIPTOR *)
-	AllocateZeroPool (sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR));
+        (UDF_LOGICAL_VOLUME_DESCRIPTOR *)
+        AllocateZeroPool (sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR));
       if (!LogicalVolDesc) {
         Status = EFI_OUT_OF_RESOURCES;
         goto Error_Alloc_Lvd;
       }
 
       CopyMem (
-	(VOID *)LogicalVolDesc,
-	Buffer,
-	sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR)
-	);
+        (VOID *)LogicalVolDesc,
+        Buffer,
+        sizeof (UDF_LOGICAL_VOLUME_DESCRIPTOR)
+        );
 
       Volume->LogicalVolDescs[Volume->LogicalVolDescsNo] = LogicalVolDesc;
       Volume->LogicalVolDescsNo++;
@@ -202,18 +202,18 @@ StartMainVolumeDescriptorSequence (
       // Found a Partition Descriptor.
       //
       PartitionDesc =
-	(UDF_PARTITION_DESCRIPTOR *)
-	AllocateZeroPool (sizeof (UDF_PARTITION_DESCRIPTOR));
+        (UDF_PARTITION_DESCRIPTOR *)
+        AllocateZeroPool (sizeof (UDF_PARTITION_DESCRIPTOR));
       if (!PartitionDesc) {
         Status = EFI_OUT_OF_RESOURCES;
         goto Error_Alloc_Pd;
       }
 
       CopyMem (
-	(VOID *)PartitionDesc,
-	Buffer,
-	sizeof (UDF_PARTITION_DESCRIPTOR)
-	);
+        (VOID *)PartitionDesc,
+        Buffer,
+        sizeof (UDF_PARTITION_DESCRIPTOR)
+        );
 
       Volume->PartitionDescs[Volume->PartitionDescsNo] = PartitionDesc;
       Volume->PartitionDescsNo++;
@@ -490,8 +490,8 @@ GetFidDescriptorLength (
 {
   return (UINT64)(
              (INTN)((OFFSET_OF (UDF_FILE_IDENTIFIER_DESCRIPTOR, Data[0]) + 3 +
-		     FileIdentifierDesc->LengthOfFileIdentifier +
-		     FileIdentifierDesc->LengthOfImplementationUse) >> 2) << 2
+                     FileIdentifierDesc->LengthOfFileIdentifier +
+                     FileIdentifierDesc->LengthOfImplementationUse) >> 2) << 2
              );
 }
 
@@ -549,13 +549,13 @@ GetFileEntryData (
 
     *Length  = ExtendedFileEntry->InformationLength;
     *Data    = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
-			ExtendedFileEntry->LengthOfExtendedAttributes);
+                        ExtendedFileEntry->LengthOfExtendedAttributes);
   } else if (IS_FE (FileEntryData)) {
     FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 
     *Length  = FileEntry->InformationLength;
     *Data    = (VOID *)((UINT8 *)&FileEntry->Data[0] +
-			FileEntry->LengthOfExtendedAttributes);
+                        FileEntry->LengthOfExtendedAttributes);
   }
 }
 
@@ -577,13 +577,13 @@ GetAdsInformation (
 
     *Length = ExtendedFileEntry->LengthOfAllocationDescriptors;
     *AdsData = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
-			ExtendedFileEntry->LengthOfExtendedAttributes);
+                        ExtendedFileEntry->LengthOfExtendedAttributes);
   } else if (IS_FE (FileEntryData)) {
     FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
 
     *Length = FileEntry->LengthOfAllocationDescriptors;
     *AdsData = (VOID *)((UINT8 *)&FileEntry->Data[0] +
-			FileEntry->LengthOfExtendedAttributes);
+                        FileEntry->LengthOfExtendedAttributes);
   }
 }
 
@@ -618,7 +618,7 @@ GetLongAdFromAds (
     //
     ExtentFlags = GET_EXTENT_FLAGS (LONG_ADS_SEQUENCE, LongAd);
     if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
-	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
+        ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
       break;
     }
 
@@ -665,7 +665,7 @@ GetShortAdFromAds (
     //
     ExtentFlags = GET_EXTENT_FLAGS (SHORT_ADS_SEQUENCE, ShortAd);
     if (ExtentFlags == EXTENT_IS_NEXT_EXTENT ||
-	ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
+        ExtentFlags == EXTENT_RECORDED_AND_ALLOCATED) {
       break;
     }
 
@@ -1064,111 +1064,111 @@ ReadFile (
                                 Ad
                                 );
 
-	switch (ReadFileInfo->Flags) {
-	  case READ_FILE_GET_FILESIZE:
-	    ReadFileInfo->ReadLength += ExtentLength;
-	    break;
-	  case READ_FILE_ALLOCATE_AND_READ:
-	    //
-	    // Increase FileData (if necessary) to read next extent.
-	    //
-	    Status = GrowUpBufferToNextAd (
+        switch (ReadFileInfo->Flags) {
+          case READ_FILE_GET_FILESIZE:
+            ReadFileInfo->ReadLength += ExtentLength;
+            break;
+          case READ_FILE_ALLOCATE_AND_READ:
+            //
+            // Increase FileData (if necessary) to read next extent.
+            //
+            Status = GrowUpBufferToNextAd (
                                      RecordingFlags,
                                      Ad,
                                      &ReadFileInfo->FileData,
                                      ReadFileInfo->ReadLength
                                      );
-	    if (EFI_ERROR (Status)) {
-	      goto Error_Alloc_Buffer_To_Next_Ad;
-	    }
+            if (EFI_ERROR (Status)) {
+              goto Error_Alloc_Buffer_To_Next_Ad;
+            }
 
-	    //
-	    // Read extent's data into FileData.
-	    //
-	    Status = DiskIo->ReadDisk (
+            //
+            // Read extent's data into FileData.
+            //
+            Status = DiskIo->ReadDisk (
                                     DiskIo,
-				    BlockIo->Media->MediaId,
-				    MultU64x32 (Lsn, LogicalBlockSize),
-				    ExtentLength,
-				    (VOID *)((UINT8 *)ReadFileInfo->FileData +
-					     ReadFileInfo->ReadLength)
+                                    BlockIo->Media->MediaId,
+                                    MultU64x32 (Lsn, LogicalBlockSize),
+                                    ExtentLength,
+                                    (VOID *)((UINT8 *)ReadFileInfo->FileData +
+                                             ReadFileInfo->ReadLength)
                                   );
-	    if (EFI_ERROR (Status)) {
-	      goto Error_Read_Disk_Blk;
-	    }
+            if (EFI_ERROR (Status)) {
+              goto Error_Read_Disk_Blk;
+            }
 
-	    ReadFileInfo->ReadLength += ExtentLength;
-	    break;
-	  case READ_FILE_SEEK_AND_READ:
-	    //
-	    // Seek file first before reading in its data.
-	    //
-	    if (FinishedSeeking) {
-	      Offset = 0;
-	      goto Skip_File_Seek;
-	    }
+            ReadFileInfo->ReadLength += ExtentLength;
+            break;
+          case READ_FILE_SEEK_AND_READ:
+            //
+            // Seek file first before reading in its data.
+            //
+            if (FinishedSeeking) {
+              Offset = 0;
+              goto Skip_File_Seek;
+            }
 
-	    if (FilePosition + ExtentLength < ReadFileInfo->FilePosition) {
-	      FilePosition += ExtentLength;
-	      goto Skip_Ad;
-	    }
+            if (FilePosition + ExtentLength < ReadFileInfo->FilePosition) {
+              FilePosition += ExtentLength;
+              goto Skip_Ad;
+            }
 
-	    if (FilePosition + ExtentLength > ReadFileInfo->FilePosition) {
-	      Offset = ReadFileInfo->FilePosition - FilePosition;
-	      if (Offset < 0) {
-		Offset = -(Offset);
-	      }
-	    } else {
-	      Offset = 0;
-	    }
+            if (FilePosition + ExtentLength > ReadFileInfo->FilePosition) {
+              Offset = ReadFileInfo->FilePosition - FilePosition;
+              if (Offset < 0) {
+                Offset = -(Offset);
+              }
+            } else {
+              Offset = 0;
+            }
 
-	    //
-	    // Done with seeking file. Start reading its data.
-	    //
-	    FinishedSeeking = TRUE;
+            //
+            // Done with seeking file. Start reading its data.
+            //
+            FinishedSeeking = TRUE;
 
 Skip_File_Seek:
-	    //
-	    // Make sure we don't read more data than really wanted.
-	    //
-	    if (ExtentLength - Offset > BytesLeft) {
-	      DataLength = BytesLeft;
-	    } else {
-	      DataLength = ExtentLength - Offset;
-	    }
+            //
+            // Make sure we don't read more data than really wanted.
+            //
+            if (ExtentLength - Offset > BytesLeft) {
+              DataLength = BytesLeft;
+            } else {
+              DataLength = ExtentLength - Offset;
+            }
 
-	    //
-	    // Read extent's data into FileData.
-	    //
-	    Status = DiskIo->ReadDisk (
+            //
+            // Read extent's data into FileData.
+            //
+            Status = DiskIo->ReadDisk (
                                     DiskIo,
-				    BlockIo->Media->MediaId,
-				    Offset + MultU64x32 (Lsn, LogicalBlockSize),
-				    DataLength,
-				    (VOID *)((UINT8 *)ReadFileInfo->FileData +
-					     DataOffset)
+                                    BlockIo->Media->MediaId,
+                                    Offset + MultU64x32 (Lsn, LogicalBlockSize),
+                                    DataLength,
+                                    (VOID *)((UINT8 *)ReadFileInfo->FileData +
+                                             DataOffset)
                                     );
-	    if (EFI_ERROR (Status)) {
-	      goto Error_Read_Disk_Blk;
-	    }
+            if (EFI_ERROR (Status)) {
+              goto Error_Read_Disk_Blk;
+            }
 
             //
             // Update current file's position.
-	    //
-	    DataOffset += DataLength;
-	    ReadFileInfo->FilePosition += DataLength;
+            //
+            DataOffset += DataLength;
+            ReadFileInfo->FilePosition += DataLength;
 
-	    BytesLeft -= DataLength;
-	    if (!BytesLeft) {
-	      //
-	      // There is no more file data to read.
-	      //
-	      Status = EFI_SUCCESS;
-	      goto Done;
-	    }
+            BytesLeft -= DataLength;
+            if (!BytesLeft) {
+              //
+              // There is no more file data to read.
+              //
+              Status = EFI_SUCCESS;
+              goto Done;
+            }
 
-	    break;
-	}
+            break;
+        }
 
 Skip_Ad:
         //
@@ -1255,14 +1255,14 @@ InternalFindFile (
   for (;;) {
     Status = ReadDirectoryEntry (
                              BlockIo,
-			     DiskIo,
-			     Volume,
-			     Parent->FileIdentifierDesc ?
-			     &Parent->FileIdentifierDesc->Icb :
-			     Icb,
-			     Parent->FileEntry,
-			     &ReadDirInfo,
-			     &FileIdentifierDesc
+                             DiskIo,
+                             Volume,
+                             Parent->FileIdentifierDesc ?
+                             &Parent->FileIdentifierDesc->Icb :
+                             Icb,
+                             Parent->FileEntry,
+                             &ReadDirInfo,
+                             &FileIdentifierDesc
                              );
     if (EFI_ERROR (Status)) {
       if (Status == EFI_DEVICE_ERROR) {
@@ -1333,10 +1333,10 @@ Skip_Fid:
     if (StrCmp (FileName, L"\\")) {
       Status = FindFileEntry (
                           BlockIo,
-			  DiskIo,
-			  Volume,
-			  &FileIdentifierDesc->Icb,
-			  &CompareFileEntry
+                          DiskIo,
+                          Volume,
+                          &FileIdentifierDesc->Icb,
+                          &CompareFileEntry
                           );
       if (EFI_ERROR (Status)) {
         goto Error_Find_Fe;
@@ -1346,11 +1346,11 @@ Skip_Fid:
       // Make sure that both Parent's FE/EFE and found FE/EFE are not equal.
       //
       if (CompareMem (
-	    (VOID *)Parent->FileEntry,
-	    (VOID *)CompareFileEntry,
-	    Volume->FileEntrySize
-	    )
-	 ) {
+            (VOID *)Parent->FileEntry,
+            (VOID *)CompareFileEntry,
+            Volume->FileEntrySize
+            )
+         ) {
         File->FileEntry = CompareFileEntry;
       } else {
         FreePool ((VOID *)FileIdentifierDesc);
@@ -1417,24 +1417,24 @@ SupportUdfFileSystem (
     }
 
     if (!CompareMem (
-	  (VOID *)&VolDescriptor.StandardIdentifier,
-	  (VOID *)&gUdfStandardIdentifiers[BEA_IDENTIFIER],
-	  UDF_STANDARD_IDENTIFIER_LENGTH
-	  )
+          (VOID *)&VolDescriptor.StandardIdentifier,
+          (VOID *)&gUdfStandardIdentifiers[BEA_IDENTIFIER],
+          UDF_STANDARD_IDENTIFIER_LENGTH
+          )
       ) {
       break;
     }
 
     if (CompareMem (
-	  (VOID *)&VolDescriptor.StandardIdentifier,
-	  (VOID *)UDF_CDROM_VOLUME_IDENTIFIER,
-	  UDF_STANDARD_IDENTIFIER_LENGTH
-	  ) ||
-	!CompareMem (
-	  (VOID *)&VolDescriptor,
-	  (VOID *)&TerminatingVolDescriptor,
-	  sizeof (UDF_VOLUME_DESCRIPTOR)
-	  )
+          (VOID *)&VolDescriptor.StandardIdentifier,
+          (VOID *)UDF_CDROM_VOLUME_IDENTIFIER,
+          UDF_STANDARD_IDENTIFIER_LENGTH
+          ) ||
+        !CompareMem (
+          (VOID *)&VolDescriptor,
+          (VOID *)&TerminatingVolDescriptor,
+          sizeof (UDF_VOLUME_DESCRIPTOR)
+          )
       ) {
       return EFI_UNSUPPORTED;
     }
@@ -1460,10 +1460,10 @@ SupportUdfFileSystem (
   }
 
   if (CompareMem (
-	(VOID *)&VolDescriptor.StandardIdentifier,
-	(VOID *)&gUdfStandardIdentifiers[VSD_IDENTIFIER],
-	UDF_STANDARD_IDENTIFIER_LENGTH
-	)
+        (VOID *)&VolDescriptor.StandardIdentifier,
+        (VOID *)&gUdfStandardIdentifiers[VSD_IDENTIFIER],
+        UDF_STANDARD_IDENTIFIER_LENGTH
+        )
     ) {
     return EFI_UNSUPPORTED;
   }
@@ -1488,10 +1488,10 @@ SupportUdfFileSystem (
   }
 
   if (CompareMem (
-	(VOID *)&VolDescriptor.StandardIdentifier,
-	(VOID *)&gUdfStandardIdentifiers[TEA_IDENTIFIER],
-	UDF_STANDARD_IDENTIFIER_LENGTH
-	)
+        (VOID *)&VolDescriptor.StandardIdentifier,
+        (VOID *)&gUdfStandardIdentifiers[TEA_IDENTIFIER],
+        UDF_STANDARD_IDENTIFIER_LENGTH
+        )
     ) {
     return EFI_UNSUPPORTED;
   }
@@ -1796,10 +1796,10 @@ FindFile (
     }
 
     if (CompareMem (
-	  (VOID *)&PreviousFile,
-	  (VOID *)Parent,
-	  sizeof (UDF_FILE_INFO)
-	  )
+          (VOID *)&PreviousFile,
+          (VOID *)Parent,
+          sizeof (UDF_FILE_INFO)
+          )
       ) {
       CleanupFileInformation (&PreviousFile);
     }
@@ -1858,11 +1858,11 @@ ReadDirectoryEntry (
 
     Status = ReadFile (
                    BlockIo,
-		   DiskIo,
-		   Volume,
-		   ParentIcb,
-		   FileEntryData,
-		   &ReadFileInfo
+                   DiskIo,
+                   Volume,
+                   ParentIcb,
+                   FileEntryData,
+                   &ReadFileInfo
                    );
     if (EFI_ERROR (Status)) {
       return Status;
@@ -1889,7 +1889,7 @@ ReadDirectoryEntry (
     //
     FileIdentifierDesc = GET_FID_FROM_ADS (
                                      ReadDirInfo->DirectoryData,
-				     ReadDirInfo->FidOffset
+                                     ReadDirInfo->FidOffset
                                      );
     //
     // Update FidOffset to point to the next FID.
@@ -1926,7 +1926,7 @@ GetFileNameFromFid (
   OstaCompressed =
     (UINT8 *)(
            (UINT8 *)&FileIdentifierDesc->Data[0] +
-	   FileIdentifierDesc->LengthOfImplementationUse
+           FileIdentifierDesc->LengthOfImplementationUse
            );
 
   CompressionId = OstaCompressed[0];
@@ -2114,10 +2114,10 @@ Next_Path_Component:
     }
 
     if (CompareMem (
-	  (VOID *)&PreviousFile,
-	  (VOID *)Parent,
-	  sizeof (UDF_FILE_INFO)
-	  )
+          (VOID *)&PreviousFile,
+          (VOID *)Parent,
+          sizeof (UDF_FILE_INFO)
+          )
       ) {
       CleanupFileInformation (&PreviousFile);
     }
@@ -2134,10 +2134,10 @@ Next_Path_Component:
 
 Error_Find_File:
   if (CompareMem (
-	(VOID *)&PreviousFile,
-	(VOID *)Parent,
-	sizeof (UDF_FILE_INFO)
-	)
+        (VOID *)&PreviousFile,
+        (VOID *)Parent,
+        sizeof (UDF_FILE_INFO)
+        )
     ) {
     CleanupFileInformation (&PreviousFile);
   }
@@ -2293,8 +2293,8 @@ SetFileInfo (
   // Calculate the needed size for the EFI_FILE_INFO structure.
   //
   FileInfoLength = sizeof (EFI_FILE_INFO) + (FileName ?
-					     StrSize (FileName) :
-					     sizeof (CHAR16)
+                                             StrSize (FileName) :
+                                             sizeof (CHAR16)
                                             );
   if (*BufferSize < FileInfoLength) {
     //
@@ -2604,23 +2604,23 @@ CalculateTagChecksum (
 {
   UINT8 *Data = (UINT8 *)Descriptor;
   UINTN Index;
-  UINTN Count = 0;
+  UINTN Sum = 0;
 
   //
   // Sum up 0-3 bytes.
   //
   for (Index = 0; Index < 4; Index++) {
-    Count += Data[Index];
+    Sum = (Sum + Data[Index]) % 256;
   }
 
   //
   // Sum up 5-15 bytes.
   //
   for (Index = 5; Index < 16; Index++) {
-    Count += Data[Index];
+    Sum = (Sum + Data[Index]) % 256;
   }
 
-  return (UINT8)(Count % 256);
+  return Sum & 0xFF;
 }
 
 EFI_STATUS
@@ -2657,20 +2657,20 @@ GetUnallocatedSpaceLsn (
 
   ExtentLength = GET_EXTENT_LENGTH (
                          SHORT_ADS_SEQUENCE,
-			 &PartitionHdrDesc->UnallocatedSpaceBitmap
+                         &PartitionHdrDesc->UnallocatedSpaceBitmap
                          );
   if (ExtentLength) {
     Print (L"Partition has Unallocated Space Bitmap\n");
     Print (L"ExtentLength: %d - ExtentPosition: (%d; %d) - blocks: %d\n",
-	   ExtentLength,
-	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
-	   PartitionDesc->PartitionStartingLocation +
-	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
-	   ExtentLength / LogicalBlockSize);
+           ExtentLength,
+           PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+           PartitionDesc->PartitionStartingLocation +
+           PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+           ExtentLength / LogicalBlockSize);
 
     Lsn = GetShortAdLsn (
                   PartitionDesc,
-		  &PartitionHdrDesc->UnallocatedSpaceBitmap
+                  &PartitionHdrDesc->UnallocatedSpaceBitmap
                   );
 
     Status = DiskIo->ReadDisk (
@@ -2689,8 +2689,8 @@ GetUnallocatedSpaceLsn (
     }
 
     Print (L"space bitmap desc: bits no: %d - bytes no: %d\n",
-	   SpaceBitmap.NumberOfBits,
-	   SpaceBitmap.NumberOfBytes);
+           SpaceBitmap.NumberOfBits,
+           SpaceBitmap.NumberOfBytes);
 
     Data = (UINT8 *)AllocatePool (LogicalBlockSize);
     if (!Data) {
@@ -2724,12 +2724,12 @@ GetUnallocatedSpaceLsn (
                               (VOID *)Data
                               );
       if (EFI_ERROR (Status)) {
-	goto Error_Read_Disk_Blk;
+        goto Error_Read_Disk_Blk;
       }
 
       InvalidateBitmap = FALSE;
       for (Index = 0; Index < BytesToRead; Index++) {
-	Bits = 0;
+        Bits = 0;
         while (Bits <= sizeof (UINT8) * 8) {
           if (Data[Index] & (1 << Bits)) {
             *LogicalBlockNumber = (Count + Index) * 8 + Bits;
@@ -2753,13 +2753,13 @@ Found_Unallocated_Space:
                                  (VOID *)Data
                                  );
         if (EFI_ERROR (Status)) {
-	  goto Error_Write_Disk_Blk;
+          goto Error_Write_Disk_Blk;
         }
 
         Status = BlockIo->FlushBlocks (BlockIo);
-	if (EFI_ERROR (Status)) {
+        if (EFI_ERROR (Status)) {
           goto Error_Flush_Disk_Blks;
-	}
+        }
       }
 
       Count += LogicalBlockSize;
@@ -2827,10 +2827,25 @@ UpdateLogicalVolumeIntegrity (
   ExtentAd = &LogicalVolDesc->IntegritySequenceExtent;
   Lsn = (UINT64)ExtentAd->ExtentLocation;
 
+  Print (L"extad: length: %d\n", ExtentAd->ExtentLength);
+  Print (L"lvid: length: %d\n", sizeof (UDF_LOGICAL_VOLUME_INTEGRITY));
+  Print (L"desc tag: length: %d\n", sizeof (UDF_DESCRIPTOR_TAG));
+
+  LogicalVolInt->DescriptorTag.DescriptorCRCLength = (sizeof (UDF_LOGICAL_VOLUME_INTEGRITY) +
+                                                      LogicalVolInt->LengthOfImplementationUse) -
+                                                     sizeof (UDF_DESCRIPTOR_TAG);
+  LogicalVolInt->DescriptorTag.DescriptorCRC = CalculateCrc (
+                                                   (VOID *)((UINTN)LogicalVolInt +
+                                                            sizeof (UDF_DESCRIPTOR_TAG)),
+                                                   LogicalVolInt->DescriptorTag.DescriptorCRCLength
+                                                   );
+
+  LogicalVolInt->DescriptorTag.TagChecksum = CalculateTagChecksum (LogicalVolInt);
+
   return DiskIo->WriteDisk (
                         DiskIo,
                         BlockIo->Media->MediaId,
-			MultU64x32 (Lsn, LogicalVolDesc->LogicalBlockSize),
+                        MultU64x32 (Lsn, LogicalVolDesc->LogicalBlockSize),
                         ExtentAd->ExtentLength,
                         (VOID *)LogicalVolInt
                         );
@@ -2838,11 +2853,11 @@ UpdateLogicalVolumeIntegrity (
 
 EFI_STATUS
 SetupNewFileEntry (
-  IN EFI_BLOCK_IO_PROTOCOL *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL *DiskIo,
-  IN   UDF_VOLUME_INFO                *Volume,
-  IN OUT UDF_FILE_IDENTIFIER_DESCRIPTOR *FileIdentifierDesc,
-  OUT  UDF_EXTENDED_FILE_ENTRY        **NewFileEntry
+  IN EFI_BLOCK_IO_PROTOCOL               *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL                *DiskIo,
+  IN   UDF_VOLUME_INFO                   *Volume,
+  IN OUT UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc,
+  OUT  UDF_EXTENDED_FILE_ENTRY           **NewFileEntry
   )
 {
   UDF_PARTITION_DESCRIPTOR  *PartitionDesc;
@@ -2854,7 +2869,7 @@ SetupNewFileEntry (
   EFI_TIME                             Time;
   UDF_AD_IMPLEMENTATION_USE            *AdImpUse;
 
-  ExtendedFileEntry = AllocateZeroPool (Volume->FileEntrySize);
+  ExtendedFileEntry = AllocateZeroPool (LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM));
   if (!ExtendedFileEntry) {
     return EFI_OUT_OF_RESOURCES;
   }
@@ -2863,8 +2878,6 @@ SetupNewFileEntry (
   ExtendedFileEntry->DescriptorTag.DescriptorVersion = 3;
   ExtendedFileEntry->DescriptorTag.Reserved = 0;
   ExtendedFileEntry->DescriptorTag.TagSerialNumber = 1;
-  ExtendedFileEntry->DescriptorTag.DescriptorCRC = 0;
-  ExtendedFileEntry->DescriptorTag.DescriptorCRCLength = 0;
 
   PartitionDesc = GetPdFromLongAd (Volume, &FileIdentifierDesc->Icb);
 
@@ -2872,7 +2885,6 @@ SetupNewFileEntry (
         PartitionDesc->PartitionStartingLocation;
 
   ExtendedFileEntry->DescriptorTag.TagLocation = Lsn;
-  ExtendedFileEntry->DescriptorTag.TagChecksum = CalculateTagChecksum (ExtendedFileEntry);
 
   if (IS_FID_DIRECTORY_FILE (FileIdentifierDesc)) {
     ExtendedFileEntry->IcbTag.FileType = 4;
@@ -2926,6 +2938,7 @@ SetupNewFileEntry (
   ExtendedFileEntry->Gid = 0xFFFFFFFF;
 
   ExtendedFileEntry->FileLinkCount = 1;
+  ExtendedFileEntry->CheckPoint = 1;
 
   ReadLogicalVolumeIntegrity (
     BlockIo,
@@ -2956,22 +2969,34 @@ SetupNewFileEntry (
 
   FreePool ((VOID *)LogicalVolInt);
 
-  *NewFileEntry = ExtendedFileEntry;
+  ExtendedFileEntry->DescriptorTag.DescriptorCRCLength = sizeof (UDF_EXTENDED_FILE_ENTRY) -
+                                                         sizeof (UDF_DESCRIPTOR_TAG);
+  ExtendedFileEntry->DescriptorTag.DescriptorCRC = CalculateCrc (
+                                             (VOID *)((UINTN)ExtendedFileEntry +
+                                                      sizeof (UDF_DESCRIPTOR_TAG)),
+                                             ExtendedFileEntry->DescriptorTag.DescriptorCRCLength
+                                             );
 
+  ExtendedFileEntry->DescriptorTag.TagChecksum = CalculateTagChecksum (ExtendedFileEntry);
+
+  Print (L"fe: tag checksum: 0x%x\n", ExtendedFileEntry->DescriptorTag.TagChecksum);
+
+  *NewFileEntry = ExtendedFileEntry;
   return EFI_SUCCESS;
 }
 
 EFI_STATUS
 SetupNewFileIdentifierDesc (
-  IN EFI_BLOCK_IO_PROTOCOL *BlockIo,
-  IN EFI_DISK_IO_PROTOCOL *DiskIo,
-  IN   UDF_VOLUME_INFO                *Volume,
-  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR *ParentFid,
-  IN   CHAR16                         *FileName,
-  IN   UINT16                         Attributes,
-  OUT  UDF_FILE_IDENTIFIER_DESCRIPTOR *NewFid
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR  *ParentFid,
+  IN   CHAR16                          *FileName,
+  IN   UINT16                          Attributes,
+  OUT  UDF_FILE_IDENTIFIER_DESCRIPTOR  **FileIdentifierDesc
   )
 {
+  UDF_FILE_IDENTIFIER_DESCRIPTOR  *NewFid;
   UDF_PARTITION_DESCRIPTOR  *PartitionDesc;
   UINT64                    Lsn;
   UINTN                     Count;
@@ -2980,22 +3005,24 @@ SetupNewFileIdentifierDesc (
   UINT8                     *FileNamePointer;
   UINT8                     *FidFileNamePointer;
 
-  NewFid->DescriptorTag.TagIdentifier = 257;
-  NewFid->DescriptorTag.DescriptorVersion = 3;
-  NewFid->DescriptorTag.Reserved = 0;
-  NewFid->DescriptorTag.TagSerialNumber = 1;
-  NewFid->DescriptorTag.DescriptorCRC = 0;
-  NewFid->DescriptorTag.DescriptorCRCLength = 0;
+  NewFid = AllocateZeroPool (LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM));
+  if (!NewFid) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  NewFid->DescriptorTag.TagIdentifier      = 257;
+  NewFid->DescriptorTag.DescriptorVersion  = 3;
+  NewFid->DescriptorTag.Reserved           = 0;
+  NewFid->DescriptorTag.TagSerialNumber    = 1;
 
   PartitionDesc = GetPdFromLongAd (Volume, &ParentFid->Icb);
 
   Lsn = GetLongAdLsn (Volume, &ParentFid->Icb) -
         PartitionDesc->PartitionStartingLocation;
 
-  NewFid->DescriptorTag.TagLocation = Lsn;
-  NewFid->DescriptorTag.TagChecksum = CalculateTagChecksum (NewFid);
-
-  NewFid->FileVersionNumber = 1;
+  NewFid->DescriptorTag.TagLocation  = Lsn;
+  NewFid->FileVersionNumber          = 1;
+  NewFid->LengthOfImplementationUse  = 0;
 
   if (Attributes & EFI_FILE_DIRECTORY) {
     NewFid->FileCharacteristics |= DIRECTORY_FILE;
@@ -3003,12 +3030,9 @@ SetupNewFileIdentifierDesc (
     NewFid->FileCharacteristics &= ~(DIRECTORY_FILE | PARENT_FILE);
   }
 
-  NewFid->LengthOfImplementationUse = 0;
-
   CompressionId = FID_COMPRESSION_ID (ParentFid);
-  *((UINT8 *)NewFid->Data) = CompressionId;
 
-  Print (L"Parent fid: comp id: %d\n", CompressionId);
+  *((UINT8 *)NewFid->Data) = CompressionId;
 
   NewFid->LengthOfFileIdentifier = StrSize (FileName);
   if (CompressionId == 8) {
@@ -3016,7 +3040,8 @@ SetupNewFileIdentifierDesc (
   }
 
   FileNamePointer = (UINT8 *)FileName;
-  FidFileNamePointer = (UINT8 *)((UINTN)NewFid->Data + NewFid->LengthOfImplementationUse + 1);
+  FidFileNamePointer = (UINT8 *)((UINTN)NewFid->Data +
+                                 NewFid->LengthOfImplementationUse + 1);
   while (*FileNamePointer) {
     if (CompressionId == 16) {
       *FidFileNamePointer++ = *FileNamePointer++;
@@ -3024,41 +3049,108 @@ SetupNewFileIdentifierDesc (
     } else {
       *FidFileNamePointer++ = *FileNamePointer++;
       if (*FileNamePointer) {
-	*FidFileNamePointer++ = *FileNamePointer;
+        *FidFileNamePointer++ = *FileNamePointer;
       }
-
       FileNamePointer++;
     }
   }
 
   Status = GetUnallocatedSpaceLsn (
-			       BlockIo,
-			       DiskIo,
-			       Volume,
-			       ParentFid,
-			       &NewFid->Icb.ExtentLocation.LogicalBlockNumber
-			       );
-  ASSERT (!EFI_ERROR (Status));
-
-  Print (
-      L"--> unallocated extent: %d\n",
-      NewFid->Icb.ExtentLocation.LogicalBlockNumber
-      );
+                               BlockIo,
+                               DiskIo,
+                               Volume,
+                               ParentFid,
+                               &NewFid->Icb.ExtentLocation.LogicalBlockNumber
+                               );
+  if (EFI_ERROR (Status)) {
+    goto Error_Get_Unallocated_Space;
+  }
 
   Count = Volume->FileEntrySize / LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
   while (Count--) {
-    GetUnallocatedSpaceLsn (BlockIo, DiskIo, Volume, ParentFid, (UINT32 *)&Lsn);
+    Status = GetUnallocatedSpaceLsn (
+      BlockIo,
+      DiskIo,
+      Volume,
+      ParentFid,
+      (UINT32 *)&Lsn
+      );
+    if (EFI_ERROR (Status)) {
+      goto Error_Get_Unallocated_Space;
+    }
   }
 
   NewFid->Icb.ExtentLocation.PartitionReferenceNumber =
                                            PartitionDesc->PartitionNumber;
   NewFid->Icb.ExtentLength = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
 
+  *FileIdentifierDesc = NewFid;
+
+  return EFI_SUCCESS;
+
+Error_Get_Unallocated_Space:
+  FreePool ((VOID *)NewFid);
+  return Status;
+}
+
+//
+// Create FID and FE descriptors for the new file.
+//
+EFI_STATUS
+SetupNewFileDescriptors (
+  IN   EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN   UDF_VOLUME_INFO                 *Volume,
+  IN   UDF_FILE_IDENTIFIER_DESCRIPTOR  *ParentFid,
+  IN   CHAR16                          *FileName,
+  IN   UINT64                          Attributes,
+  OUT  UDF_FILE_IDENTIFIER_DESCRIPTOR  **FileIdentifierDesc,
+  OUT  UDF_EXTENDED_FILE_ENTRY         **FileEntry
+  )
+{
+  EFI_STATUS                      Status;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR  *NewFid;
+
+  Status = SetupNewFileIdentifierDesc (
+    BlockIo,
+    DiskIo,
+    Volume,
+    ParentFid,
+    FileName,
+    Attributes,
+    &NewFid
+    );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = SetupNewFileEntry (
+    BlockIo,
+    DiskIo,
+    Volume,
+    NewFid,
+    FileEntry
+    );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  NewFid->DescriptorTag.DescriptorCRCLength = GetFidDescriptorLength (NewFid) -
+                                              sizeof (UDF_DESCRIPTOR_TAG);
+  NewFid->DescriptorTag.DescriptorCRC = CalculateCrc (
+    (VOID *)((UINTN)NewFid +
+             sizeof (UDF_DESCRIPTOR_TAG)),
+    NewFid->DescriptorTag.DescriptorCRCLength
+    );
+
+  NewFid->DescriptorTag.TagChecksum = CalculateTagChecksum (NewFid);
+
+  *FileIdentifierDesc = NewFid;
   return EFI_SUCCESS;
 }
 
 /**
-  Seek a file and read its data into memory on an UDF volume.
+  Create a file on an UDF volume.
 
   @param[in]      BlockIo       BlockIo interface.
   @param[in]      DiskIo        DiskIo interface.
@@ -3091,31 +3183,30 @@ CreateFile (
   OUT  UDF_FILE_INFO                   *File
   )
 {
-  UDF_PARTITION_DESCRIPTOR *PartitionDesc;
-  UDF_PARTITION_HEADER_DESCRIPTOR *PartitionHdrDesc;
-  UINT32 ExtentLength;
-  UINT32 LogicalBlockSize;
-  CHAR16 TmpFileName[UDF_FILENAME_LENGTH] = { 0 };
-  CHAR16 *TmpFileNamePointer;
-  UDF_FILE_INFO TmpFile;
-  EFI_STATUS Status;
-  UDF_FE_RECORDING_FLAGS  RecordingFlags;
-
-  Print (L"CreateFile: in\n");
-
-  Print (L"CreateFile: about to a create a new file: %s\n", FileName);
+  EFI_STATUS                       Status;
+  UDF_PARTITION_DESCRIPTOR         *PartitionDesc;
+  UDF_PARTITION_HEADER_DESCRIPTOR  *PartitionHdrDesc;
+  UINT32                           ExtentLength;
+  UINT32                           LogicalBlockSize;
+  CHAR16                           TmpFileName[UDF_FILENAME_LENGTH] = { 0 };
+  CHAR16                           *TmpFileNamePointer;
+  UDF_FILE_INFO                    TmpFile;
+  UDF_FE_RECORDING_FLAGS           RecordingFlags;
+  UINT64                           Lsn;
+  VOID                             *Data;
+  UINTN                            Length;
+  UDF_FILE_IDENTIFIER_DESCRIPTOR   *NewFid;
+  UDF_EXTENDED_FILE_ENTRY          *NewFe;
+  UDF_EXTENDED_FILE_ENTRY          *ExtendedFileEntry;
+  UDF_FILE_ENTRY                   *FileEntry;
 
   StrCpy (TmpFileName, FileName);
   StrCat (TmpFileName, L"\\..");
-
   MangleFileName (TmpFileName);
 
-  if (StrCmp (TmpFileName, L"\\test")) {
-    return EFI_SUCCESS;
-  }
-
-  Print (L"CreateFile: check if parent dir (%s) exists\n", TmpFileName);
-
+  //
+  // Get parent file
+  //
   Status = FindFile (
                  BlockIo,
                  DiskIo,
@@ -3131,6 +3222,9 @@ CreateFile (
     return Status;
   }
 
+  //
+  // Make sure parent file is really a directory
+  //
   if (!IS_FID_DIRECTORY_FILE (TmpFile.FileIdentifierDesc)) {
     return EFI_NOT_FOUND;
   }
@@ -3139,97 +3233,87 @@ CreateFile (
     FileName = TmpFileNamePointer + 1;
   }
 
-  Print (L"CreateFile: %s is a directory. cool.\n", TmpFileName);
-  Print (L"CreateFile: about to create new file (%s)in memory...\n",
-	 FileName);
-
   LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
 
   RecordingFlags = GET_FE_RECORDING_FLAGS (TmpFile.FileEntry);
   switch (RecordingFlags) {
     case INLINE_DATA:
-      Print (L"inline data\n");
-
-      UDF_FILE_IDENTIFIER_DESCRIPTOR *NewFid;
-
-      UINT64 Lsn;
-
       Lsn = GetLongAdLsn (Volume, &TmpFile.FileIdentifierDesc->Icb);
 
-      NewFid = AllocateZeroPool (LogicalBlockSize);
-      ASSERT (NewFid);
+      Status = SetupNewFileDescriptors (BlockIo, DiskIo, Volume,
+					TmpFile.FileIdentifierDesc,
+					FileName, Attributes,
+					&NewFid, &NewFe);
+      if (EFI_ERROR (Status)) {
+        Print (L"Failed to create FID and FE descs for new file\n");
+        return Status;
+      }
 
-      (VOID)SetupNewFileIdentifierDesc (BlockIo, DiskIo,
-					Volume, TmpFile.FileIdentifierDesc,
-					FileName, Attributes, NewFid);
-
-      UDF_EXTENDED_FILE_ENTRY *NewFileEntry;
-
-      SetupNewFileEntry (BlockIo, DiskIo, Volume, NewFid, &NewFileEntry);
-
-      VOID *Data;
-      UINTN Length;
       GetFileEntryData (TmpFile.FileEntry, &Data, &Length);
-
-      Print (L"New FID's len: %d\n", GetFidDescriptorLength (NewFid));
-      {
-	CHAR16 Foo[UDF_FILENAME_LENGTH] = { 0 };
-
-	Status = GetFileNameFromFid (NewFid, Foo);
-	Print (L"new fid's filename: %s\n", Foo);
-      }
-
       if (Length + GetFidDescriptorLength (NewFid) < LogicalBlockSize) {
-	Print (L"New file will be inlined...\n");
-	CopyMem (
-	  (VOID *)((UINT8 *)Data + Length),
-	  (VOID *)NewFid,
-	  GetFidDescriptorLength (NewFid)
-	  );
+        CopyMem (
+          (VOID *)((UINTN)Data + Length),
+          (VOID *)NewFid,
+          GetFidDescriptorLength (NewFid)
+          );
       }
-
-      UDF_FILE_ENTRY *FileEntry;
-      UDF_EXTENDED_FILE_ENTRY *ExtendedFileEntry;
 
       if (IS_EFE (TmpFile.FileEntry)) {
-	ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)TmpFile.FileEntry;
+        ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)TmpFile.FileEntry;
 
-	Print (L"parent: strategy type: %d\n", ExtendedFileEntry->IcbTag.StrategyType);
-	Print (L"parent: strategy param: %d\n", ExtendedFileEntry->IcbTag.StrategyParameter);
-	Print (L"parent: flags: 0x%x\n", ExtendedFileEntry->IcbTag.Flags);
-	Print (L"parent: max: %d\n", ExtendedFileEntry->IcbTag.MaximumNumberOfEntries);
+        ExtendedFileEntry->InformationLength += GetFidDescriptorLength (NewFid);
+        ExtendedFileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
 
-	ExtendedFileEntry->InformationLength += GetFidDescriptorLength (NewFid);
-	ExtendedFileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
+        ExtendedFileEntry->DescriptorTag.DescriptorCRCLength = (sizeof (UDF_EXTENDED_FILE_ENTRY) +
+                                                                ExtendedFileEntry->InformationLength) -
+                                                         sizeof (UDF_DESCRIPTOR_TAG);
+        ExtendedFileEntry->DescriptorTag.DescriptorCRC = CalculateCrc (
+                                                (VOID *)((UINTN)ExtendedFileEntry +
+                                                         sizeof (UDF_DESCRIPTOR_TAG)),
+                                                ExtendedFileEntry->DescriptorTag.DescriptorCRCLength
+                                                );
+        ExtendedFileEntry->DescriptorTag.TagChecksum = CalculateTagChecksum (ExtendedFileEntry);
       } else if (IS_FE (TmpFile.FileEntry)) {
-	FileEntry = (UDF_FILE_ENTRY *)TmpFile.FileEntry;
+        FileEntry = (UDF_FILE_ENTRY *)TmpFile.FileEntry;
 
-	FileEntry->InformationLength += GetFidDescriptorLength (NewFid);
-	FileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
+        FileEntry->InformationLength += GetFidDescriptorLength (NewFid);
+        FileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
+
+        FileEntry->InformationLength += GetFidDescriptorLength (NewFid);
+        FileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
+
+        FileEntry->DescriptorTag.DescriptorCRCLength = sizeof (UDF_FILE_ENTRY) -
+                                                         sizeof (UDF_DESCRIPTOR_TAG);
+        FileEntry->DescriptorTag.DescriptorCRC = CalculateCrc (
+                                                (VOID *)((UINTN)FileEntry +
+                                                         sizeof (UDF_DESCRIPTOR_TAG)),
+                                                FileEntry->DescriptorTag.DescriptorCRCLength
+                                                );
+        FileEntry->DescriptorTag.TagChecksum = CalculateTagChecksum (FileEntry);
       }
 
       Status = DiskIo->WriteDisk (
-	DiskIo,
-	BlockIo->Media->MediaId,
-	MultU64x32 (Lsn, LogicalBlockSize),
-	Volume->FileEntrySize,
-	TmpFile.FileEntry
-	);
+        DiskIo,
+        BlockIo->Media->MediaId,
+        MultU64x32 (Lsn, LogicalBlockSize),
+        Volume->FileEntrySize,
+        TmpFile.FileEntry
+        );
       if (EFI_ERROR (Status)) {
-	return Status;
+        return Status;
       }
 
       Lsn = GetLongAdLsn (Volume, &NewFid->Icb);
 
       Status = DiskIo->WriteDisk (
-				  DiskIo,
-				  BlockIo->Media->MediaId,
-				  MultU64x32 (Lsn, LogicalBlockSize),
-				  Volume->FileEntrySize,
-				  (VOID *)NewFileEntry
-				  );
+                                  DiskIo,
+                                  BlockIo->Media->MediaId,
+                                  MultU64x32 (Lsn, LogicalBlockSize),
+                                  LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM),
+                                  (VOID *)NewFe
+                                  );
       if (EFI_ERROR (Status)) {
-	return Status;
+        return Status;
       }
 
       Status = BlockIo->FlushBlocks (BlockIo);
@@ -3253,10 +3337,10 @@ CreateFile (
   }
 
   if (CompareMem (
-	PartitionDesc->PartitionContents.Identifier,
-	"+NSR03",
-	5
-	)
+        PartitionDesc->PartitionContents.Identifier,
+        "+NSR03",
+        5
+        )
     ) {
     return EFI_UNSUPPORTED;
   }
@@ -3268,21 +3352,21 @@ CreateFile (
 
   ExtentLength = GET_EXTENT_LENGTH (
                            SHORT_ADS_SEQUENCE,
-			   &PartitionHdrDesc->UnallocatedSpaceBitmap
+                           &PartitionHdrDesc->UnallocatedSpaceBitmap
                            );
   if (ExtentLength) {
     Print (L"Partition has Unallocated Space Bitmap\n");
     Print (L"ExtentLength: %d - ExtentPosition: (%d; %d) - blocks: %d\n",
-	   ExtentLength,
-	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
-	   PartitionDesc->PartitionStartingLocation +
-	   PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
-	   ExtentLength / LogicalBlockSize);
+           ExtentLength,
+           PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+           PartitionDesc->PartitionStartingLocation +
+           PartitionHdrDesc->UnallocatedSpaceBitmap.ExtentPosition,
+           ExtentLength / LogicalBlockSize);
   }
 
   ExtentLength = GET_EXTENT_LENGTH (
                            SHORT_ADS_SEQUENCE,
-			   &PartitionHdrDesc->UnallocatedSpaceTable
+                           &PartitionHdrDesc->UnallocatedSpaceTable
                            );
   if (ExtentLength) {
     Print (L"Partition has Unallocated Space Table\n");
