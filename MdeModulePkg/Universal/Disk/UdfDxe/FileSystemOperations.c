@@ -532,8 +532,6 @@ DuplicateFe (
 // a sequence of extents (or Allocation Descriptors) which tells where file's
 // content is stored in.
 //
-// NOTE: The FE/EFE can be thought it was an inode.
-//
 VOID
 GetFileEntryData (
   IN   VOID    *FileEntryData,
@@ -557,6 +555,55 @@ GetFileEntryData (
     *Data    = (VOID *)((UINT8 *)&FileEntry->Data[0] +
                         FileEntry->LengthOfExtendedAttributes);
   }
+}
+
+VOID
+GetFileEntryData2 (
+  IN   VOID    *FileEntryData,
+  OUT  VOID    **Data,
+  OUT  UINT64  **Length
+  )
+{
+  UDF_EXTENDED_FILE_ENTRY  *ExtendedFileEntry;
+  UDF_FILE_ENTRY           *FileEntry;
+
+  if (IS_EFE (FileEntryData)) {
+    ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)FileEntryData;
+
+    *Length  = &ExtendedFileEntry->InformationLength;
+    *Data    = (VOID *)((UINT8 *)&ExtendedFileEntry->Data[0] +
+                        ExtendedFileEntry->LengthOfExtendedAttributes);
+  } else if (IS_FE (FileEntryData)) {
+    FileEntry = (UDF_FILE_ENTRY *)FileEntryData;
+
+    *Length  = &FileEntry->InformationLength;
+    *Data    = (VOID *)((UINT8 *)&FileEntry->Data[0] +
+                        FileEntry->LengthOfExtendedAttributes);
+  }
+}
+
+EFI_STATUS
+WriteFileEntry (
+  IN  EFI_BLOCK_IO_PROTOCOL           *BlockIo,
+  IN  EFI_DISK_IO_PROTOCOL            *DiskIo,
+  IN  UDF_VOLUME_INFO                 *Volume,
+  IN  UDF_FILE_IDENTIFIER_DESCRIPTOR  *FileIdentifierDesc,
+  IN  VOID                            *FileEntry
+  )
+{
+  UINT32 LogicalBlockSize;
+  UINT64 Lsn;
+
+  LogicalBlockSize = LV_BLOCK_SIZE (Volume, UDF_DEFAULT_LV_NUM);
+  Lsn = GetLongAdLsn (Volume, &FileIdentifierDesc->Icb);
+
+  return DiskIo->WriteDisk (
+                         DiskIo,
+                         BlockIo->Media->MediaId,
+                         MultU64x32 (Lsn, LogicalBlockSize),
+                         Volume->FileEntrySize,
+                         FileEntry
+                         );
 }
 
 //
@@ -966,7 +1013,7 @@ ReadFile (
   switch (RecordingFlags) {
     case INLINE_DATA:
       //
-      // There is no extents for this FE/EFE. All its data is inline.
+      // There is no extents for this FE/EFE. Data is inline.
       //
       GetFileEntryData (FileEntryData, &Data, &Length);
 
@@ -2538,6 +2585,82 @@ Read_Next_Sequence:
 }
 
 /**
+  Seek a file and write data to it on an UDF volume.
+
+  @param[in]      BlockIo       BlockIo interface.
+  @param[in]      DiskIo        DiskIo interface.
+  @param[in]      Volume        UDF volume information structure.
+  @param[in]      File          File information structure.
+  @param[in]      FileSize      Size of the file.
+  @param[in out]  FilePosition  File position.
+  @param[in out]  Buffer        File data.
+  @param[in out]  BufferSize    Write size.
+
+  @retval EFI_SUCCESS          File seeked and data written.
+  @retval EFI_UNSUPPORTED      Extended Allocation Descriptors not supported.
+  @retval EFI_NO_MEDIA         The device has no media.
+  @retval EFI_DEVICE_ERROR     The device reported an error.
+  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
+  @retval EFI_OUT_OF_RESOURCES The file's recorded data was not read due to lack
+                               of resources.
+
+**/
+EFI_STATUS
+WriteFileData (
+  IN      EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN      EFI_DISK_IO_PROTOCOL   *DiskIo,
+  IN      UDF_VOLUME_INFO        *Volume,
+  IN      UDF_FILE_INFO          *File,
+  IN      UINT64                 FileSize,
+  IN OUT  UINT64                 *FilePosition,
+  OUT     VOID                   *Buffer,
+  IN OUT  UINT64                 *BufferSize
+  )
+{
+  EFI_STATUS              Status;
+  VOID                    *Data;
+  UINT64                  *Length;
+  UDF_FE_RECORDING_FLAGS  RecordingFlags;
+
+  RecordingFlags = GET_FE_RECORDING_FLAGS (File->FileEntry);
+  switch (RecordingFlags) {
+    case INLINE_DATA:
+      //
+      // There is no extent for this FE/EFE. Data is inline.
+      //
+      GetFileEntryData2 (File->FileEntry, &Data, &Length);
+      if (*FilePosition + *BufferSize <= Volume->FileEntrySize) {
+	Print (L"Writing data in-line to file\n");
+	CopyMem (
+	  (VOID *)((UINTN)Data + *FilePosition),
+	  Buffer,
+	  *BufferSize
+	  );
+	*FilePosition += *BufferSize;
+	*Length += *BufferSize;
+        Status = WriteFileEntry (
+                             BlockIo,
+                             DiskIo,
+                             Volume,
+                             File->FileIdentifierDesc,
+                             File->FileEntry
+                             );
+      }
+      break;
+    case LONG_ADS_SEQUENCE:
+      Print (L"long ads sequence\n");
+      break;
+    case SHORT_ADS_SEQUENCE:
+      Print (L"short ads sequence\n");
+      break;
+    case EXTENDED_ADS_SEQUENCE:
+      break;
+  }
+
+  return Status;
+}
+
+/**
   Seek a file and read its data into memory on an UDF volume.
 
   @param[in]      BlockIo       BlockIo interface.
@@ -2813,6 +2936,27 @@ ReadLogicalVolumeIntegrity (
   return Status;
 }
 
+VOID
+EfiTimeToUdfTime(
+  IN   EFI_TIME       *EfiTime,
+  OUT  UDF_TIMESTAMP  *UdfTime
+  )
+{
+  //
+  // Local Time (15-12) + timezone offset (11-0)
+  //
+  UdfTime->TypeAndTimezone = (~EfiTime->TimeZone | 0x1) & 0x1FFF;
+  UdfTime->Year = EfiTime->Year;
+  UdfTime->Month = EfiTime->Month;
+  UdfTime->Day = EfiTime->Day;
+  UdfTime->Hour = EfiTime->Hour;
+  UdfTime->Minute = EfiTime->Minute;
+  UdfTime->Second = EfiTime->Second;
+  UdfTime->HundredsOfMicroseconds = EfiTime->Nanosecond;
+  UdfTime->Microseconds = EfiTime->Nanosecond * 100;
+  UdfTime->Centiseconds = EfiTime->Second / 100;
+}
+
 EFI_STATUS
 UpdateLogicalVolumeIntegrity (
   IN EFI_BLOCK_IO_PROTOCOL          *BlockIo,
@@ -2830,6 +2974,12 @@ UpdateLogicalVolumeIntegrity (
   Print (L"extad: length: %d\n", ExtentAd->ExtentLength);
   Print (L"lvid: length: %d\n", sizeof (UDF_LOGICAL_VOLUME_INTEGRITY));
   Print (L"desc tag: length: %d\n", sizeof (UDF_DESCRIPTOR_TAG));
+
+#if 0
+  EFI_TIME Time;
+  gRT->GetTime (&Time, NULL);
+  EfiTimeToUdfTime (&Time, &LogicalVolInt->RecordingDateTime);
+#endif
 
   LogicalVolInt->DescriptorTag.DescriptorCRCLength = (sizeof (UDF_LOGICAL_VOLUME_INTEGRITY) +
                                                       LogicalVolInt->LengthOfImplementationUse) -
@@ -2913,21 +3063,7 @@ SetupNewFileEntry (
     );
 
   gRT->GetTime (&Time, NULL);
-
-  //
-  // Local Time (15-12) + timezone offset (11-0)
-  //
-  FeTime.TypeAndTimezone = (~Time.TimeZone | 0x1) & 0x1FFF;
-
-  FeTime.Year = Time.Year;
-  FeTime.Month = Time.Month;
-  FeTime.Day = Time.Day;
-  FeTime.Hour = Time.Hour;
-  FeTime.Minute = Time.Minute - 2; // FIXME: workaround to shut up error msgs
-  FeTime.Second = Time.Second;
-  FeTime.HundredsOfMicroseconds = Time.Nanosecond;
-  FeTime.Microseconds = Time.Nanosecond * 100;
-  FeTime.Centiseconds = Time.Second / 100;
+  EfiTimeToUdfTime (&Time, &FeTime);
 
   CopyMem (&ExtendedFileEntry->AccessTime, &FeTime, sizeof (UDF_TIMESTAMP));
   CopyMem (&ExtendedFileEntry->ModificationTime, &FeTime, sizeof (UDF_TIMESTAMP));
@@ -3261,6 +3397,7 @@ CreateFile (
       if (IS_EFE (TmpFile.FileEntry)) {
         ExtendedFileEntry = (UDF_EXTENDED_FILE_ENTRY *)TmpFile.FileEntry;
 
+	ExtendedFileEntry->ObjectSize += GetFidDescriptorLength (NewFid);
         ExtendedFileEntry->InformationLength += GetFidDescriptorLength (NewFid);
         ExtendedFileEntry->LengthOfAllocationDescriptors += GetFidDescriptorLength (NewFid);
 
@@ -3318,14 +3455,15 @@ CreateFile (
 
       Status = BlockIo->FlushBlocks (BlockIo);
 
+      File->FileEntry = NewFe;
+      File->FileIdentifierDesc = NewFid;
       Print (L"---> done\n");
-
-      break;
-    case SHORT_ADS_SEQUENCE:
-      Print (L"short ads sequence\n");
       break;
     case LONG_ADS_SEQUENCE:
       Print (L"long ads sequence\n");
+      break;
+    case SHORT_ADS_SEQUENCE:
+      Print (L"short ads sequence\n");
       break;
     case EXTENDED_ADS_SEQUENCE:
       break;
@@ -3373,6 +3511,5 @@ CreateFile (
   }
 
   Print (L"CreatFile: out: %r\n", EFI_SUCCESS);
-
   return EFI_SUCCESS;
 }

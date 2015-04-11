@@ -182,7 +182,6 @@ UdfOpen (
   UDF_FILE_INFO               File;
   PRIVATE_UDF_FILE_DATA       *NewPrivFileData;
   CHAR16                      *TempFileName;
-  UDF_FILE_INFO               NewFile;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -222,25 +221,25 @@ UdfOpen (
                      _ROOT_FILE (PrivFileData),
                      _ROOT_FILE (PrivFileData),
                      &_ROOT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
-                     &NewFile
+                     &File
                      );
     if (EFI_ERROR (Status)) {
       goto Error_Create_File;
     }
-  }
-
-  Status = FindFile (
-                 PrivFsData->BlockIo,
-                 PrivFsData->DiskIo,
-                 &PrivFsData->Volume,
-                 FilePath,
-                 _ROOT_FILE (PrivFileData),
-                 _PARENT_FILE (PrivFileData),
-                 &_PARENT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
-                 &File
-                 );
-  if (EFI_ERROR (Status)) {
-    goto Error_Find_File;
+  } else {
+    Status = FindFile (
+                   PrivFsData->BlockIo,
+                   PrivFsData->DiskIo,
+                   &PrivFsData->Volume,
+                   FilePath,
+                   _ROOT_FILE (PrivFileData),
+                   _PARENT_FILE (PrivFileData),
+                   &_PARENT_FILE(PrivFileData)->FileIdentifierDesc->Icb,
+                   &File
+                   );
+    if (EFI_ERROR (Status)) {
+      goto Error_Find_File;
+    }
   }
 
   NewPrivFileData =
@@ -358,7 +357,6 @@ UdfRead (
   }
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
-
   PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
 
   BlockIo                = PrivFsData->BlockIo;
@@ -523,7 +521,6 @@ Done:
 Error_File_Beyond_The_Eof:
 Error_Invalid_Params:
   gBS->RestoreTPL (OldTpl);
-
   return Status;
 }
 
@@ -633,7 +630,73 @@ UdfWrite (
   IN      VOID               *Buffer
   )
 {
-  return EFI_WRITE_PROTECTED;
+  EFI_TPL OldTpl;
+  EFI_STATUS Status;
+  PRIVATE_UDF_FILE_DATA           *PrivFileData;
+  UDF_FILE_INFO                   *File;
+  PRIVATE_UDF_SIMPLE_FS_DATA      *PrivFsData;
+  EFI_BLOCK_IO_PROTOCOL           *BlockIo;
+  EFI_DISK_IO_PROTOCOL            *DiskIo;
+  UDF_VOLUME_INFO                 *Volume;
+  UINT64                          VolumeSize;
+  UINT64                          FreeSpaceSize;
+
+  OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
+
+  Print (L"UdfWrite: in\n");
+
+  if (!This || !BufferSize || (*BufferSize && !Buffer)) {
+    Status = EFI_INVALID_PARAMETER;
+    goto Error_Invalid_Params;
+  }
+
+  PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
+
+  File = _FILE(PrivFileData);
+  if (IS_FID_DIRECTORY_FILE (File->FileIdentifierDesc)) {
+    Status = EFI_UNSUPPORTED;
+    goto Error_Invalid_Params;
+  }
+  if (IS_FID_DELETED_FILE (File->FileIdentifierDesc)) {
+    Status = EFI_DEVICE_ERROR;
+    goto Error_Invalid_Params;
+  }
+
+  PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
+
+  BlockIo  = PrivFsData->BlockIo;
+  DiskIo   = PrivFsData->DiskIo;
+  Volume   = &PrivFsData->Volume;
+
+  Status = GetVolumeSize (BlockIo, DiskIo, Volume, &VolumeSize, &FreeSpaceSize);
+  if (EFI_ERROR (Status)) {
+    goto Error_Get_Volume_Size;
+  }
+  if (!FreeSpaceSize) {
+    Status = EFI_VOLUME_FULL;
+    goto Out_Volume_Full;
+  }
+  if (*BufferSize > FreeSpaceSize) {
+    *BufferSize = FreeSpaceSize;
+  }
+
+  Status = WriteFileData (
+                     BlockIo,
+                     DiskIo,
+                     Volume,
+                     File,
+                     PrivFileData->FileSize,
+                     &PrivFileData->FilePosition,
+                     Buffer,
+                     BufferSize
+                     );
+
+Out_Volume_Full:
+Error_Get_Volume_Size:
+Error_Invalid_Params:
+  gBS->RestoreTPL (OldTpl);
+  Print (L"UdfWrite: out: %r\n", Status);
+  return Status;
 }
 
 /**
