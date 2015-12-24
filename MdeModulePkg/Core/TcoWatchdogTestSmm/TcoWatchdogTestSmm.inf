@@ -1,0 +1,37 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = TcoWatchdogTestSmm
+  FILE_GUID                      = D84B4433-B41D-4971-8E00-E689AF0E7057
+  MODULE_TYPE                    = DXE_SMM_DRIVER
+  VERSION_STRING                 = 1.0
+  PI_SPECIFICATION_VERSION       = 0x0001001E
+  ENTRY_POINT                    = TcoWatchdogTestSmmEntryPoint
+
+#
+# The following information is for reference only and not required by the build tools.
+#
+#  VALID_ARCHITECTURES           = IA32 X64 IPF EBC
+#
+
+[Sources]
+  TcoWatchdogTestSmm.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  OvmfPkg/OvmfPkg.dec
+
+[LibraryClasses]
+  UefiLib
+  IoLib
+  PcdLib
+  DebugLib
+  UefiDriverEntryPoint
+  BaseLib
+  SmmServicesTableLib
+
+[Pcd]
+  gUefiOvmfPkgTokenSpaceGuid.PcdAcpiPmBaseAddress ## CONSUMES
+ 
+[Depex]
+  TRUE

@@ -718,6 +718,7 @@
       NULL|MdeModulePkg/Library/VarCheckUefiLib/VarCheckUefiLib.inf
   }
   MdeModulePkg/Universal/Variable/RuntimeDxe/VariableSmmRuntimeDxe.inf
+  MdeModulePkg/Core/TcoWatchdogTestSmm/TcoWatchdogTestSmm.inf
 
 !else
 
