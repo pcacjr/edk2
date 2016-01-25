@@ -58,6 +58,7 @@
   DebugLib
   TimerLib
   ReportStatusCodeLib
+  BlockIoCacheLib
 
 [Guids]
   gEfiDiskInfoIdeInterfaceGuid                  ## SOMETIMES_PRODUCES ## UNDEFINED

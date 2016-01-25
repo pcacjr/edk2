@@ -377,6 +377,17 @@ RegisterAtaDevice (
     DEBUG ((EFI_D_INFO, "Successfully Install Storage Security Protocol on the ATA device\n"));
   }
 
+  ZeroMem (&AtaDevice->BlockIoCache, sizeof (BLOCK_IO_CACHE));
+
+  //
+  // Initialize internal cache
+  //
+  Status = BlockIoCacheInitialize (&AtaDevice->BlockIoCache, &AtaDevice->BlockMedia);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AtaBus: failed to initialize internal cache: %r\n", Status));
+    goto Done;
+  }
+
   gBS->OpenProtocol (
          AtaBusDriverData->Controller,
          &gEfiAtaPassThruProtocolGuid,
@@ -1038,6 +1049,13 @@ BlockIoReadWrite (
   UINTN                             BlockSize;
   UINTN                             NumberOfBlocks;
   UINTN                             IoAlign;
+  UINTN                             Index;
+  UINTN                             CurrentLba;
+  UINTN                             BufferOffset;
+  EFI_LBA                           CacheLba;
+  UINTN                             CacheNumberOfBlocks;
+  UINTN                             CacheBlockSize;
+  VOID                              *CacheEntryBuffer;
 
   if (IsBlockIo2) {
    Media     = ((EFI_BLOCK_IO2_PROTOCOL *) This)->Media;
@@ -1083,11 +1101,93 @@ BlockIoReadWrite (
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
-  //
-  // Invoke low level AtaDevice Access Routine.
-  //
-  Status = AccessAtaDevice (AtaDevice, Buffer, Lba, NumberOfBlocks, IsWrite, Token);
+  Status = BlockIoCacheGetCacheParameters (
+    &AtaDevice->BlockIoCache,
+    Lba,
+    &CacheLba,
+    NumberOfBlocks,
+    &CacheNumberOfBlocks
+    );
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AtaBus: failed to get number of blocks for disk cache: %r\n", Status));
+    goto Done;
+  }
+  Status = BlockIoCacheGetBlockSize (&AtaDevice->BlockIoCache, &CacheBlockSize);
+  if (EFI_ERROR (Status)) {
+    goto Done;
+  }
 
+  if (!IsWrite) {
+    CurrentLba = Lba;
+    BufferOffset = 0;
+    for (Index = 0; Index < CacheNumberOfBlocks; Index++) {
+      DEBUG ((DEBUG_ERROR, "AtaBus: request disk block from cache\n"));
+      Status = BlockIoCacheRead2 (
+	&AtaDevice->BlockIoCache,
+	CacheLba,
+	1,
+	&CurrentLba,
+	NumberOfBlocks,
+	Buffer,
+	&BufferOffset
+	);
+      if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND) {
+	DEBUG ((DEBUG_ERROR, "AtaBus: failed to read from Block Io cache: %r\n", Status));
+	goto Done;
+      }
+
+      if (Status == EFI_NOT_FOUND) {
+	CacheEntryBuffer = AllocatePool (CacheBlockSize);
+	if (CacheEntryBuffer == NULL) {
+	  Status = EFI_OUT_OF_RESOURCES;
+	  goto Done;
+	}
+	//
+	// Invoke low level AtaDevice Access Routine.
+	//
+	DEBUG ((DEBUG_ERROR, "AtaBus: invoke low level AtaDevice access routine\n"));
+	Status = AccessAtaDevice (
+	  AtaDevice,
+	  CacheEntryBuffer,
+	  CacheLba,
+	  CacheBlockSize / Media->BlockSize,
+	  IsWrite,
+	  Token
+	  );
+	if (EFI_ERROR (Status)) {
+	  goto Done;
+	}
+
+	DEBUG ((DEBUG_ERROR, "AtaBus: BufferOffset: %d\n", BufferOffset));
+
+	CopyMem (
+	  (VOID *)((UINTN)Buffer + BufferOffset),
+	  CacheEntryBuffer,
+	  (CurrentLba - Lba) * Media->BlockSize
+	  );
+	BufferOffset += (CurrentLba - Lba) * Media->BlockSize;
+
+	DEBUG ((DEBUG_ERROR, "AtaBus: copied %d blocks into Buffer\n", CurrentLba - Lba));
+
+	DEBUG ((DEBUG_ERROR, "AtaBus: add read block to cache\n"));
+	Status = BlockIoCacheAdd2 (
+	  &AtaDevice->BlockIoCache,
+	  CacheLba,
+	  CacheEntryBuffer
+	  );
+	ASSERT_EFI_ERROR (Status);
+      }
+
+      CacheLba += (CacheBlockSize / Media->BlockSize);
+    }
+  } else {
+    //
+    // Invoke low level AtaDevice Access Routine.
+    //
+    Status = AccessAtaDevice (AtaDevice, Buffer, Lba, NumberOfBlocks, IsWrite, Token);
+  }
+
+Done:
   gBS->RestoreTPL (OldTpl);
 
   return Status;
