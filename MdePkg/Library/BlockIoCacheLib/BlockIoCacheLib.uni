@@ -1,0 +1,14 @@
+// /** @file
+// <Module brief description>
+//
+// <Module full description>
+//
+// <Copyright notice>
+//
+// <license>
+//
+// **/
+
+#string STR_MODULE_ABSTRACT             #language en-US "Block I/O Cache"
+
+#string STR_MODULE_DESCRIPTION          #language en-US "This module provides cache for block devices."
