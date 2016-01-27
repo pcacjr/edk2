@@ -1,0 +1,34 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = PciOptionRomTest
+  FILE_GUID                      = 28534DD0-73B3-4CD9-92B1-C304018A2EF4
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = PciOptionRomTestEntryPoint
+
+#
+# The following information is for reference only and not required by the build tools.
+#
+#  VALID_ARCHITECTURES           = IA32 X64 IPF EBC
+#
+
+[Sources]
+  PciOptionRomTest.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  SecurityPkg/SecurityPkg.dec
+  CryptoPkg/CryptoPkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiLib
+  UefiBootServicesTableLib
+  PciLib
+  DebugLib
+  MemoryAllocationLib
+  BaseCryptLib
+
+[Protocols]
+  gEfiPciIoProtocolGuid ## CONSUMES
