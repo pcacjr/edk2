@@ -89,7 +89,8 @@ ATA_DEVICE gAtaDeviceTemplate = {
   {L'\0', },                   // ModelName
   {NULL, NULL},                // AtaTaskList
   {NULL, NULL},                // AtaSubTaskList
-  FALSE                        // Abort
+  FALSE,                       // Abort
+  NULL                         // Cache
 };
 
 /**
@@ -385,6 +386,11 @@ RegisterAtaDevice (
          AtaDevice->Handle,
          EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER
          );
+
+  Status = BlockIoCacheInitialize (&AtaDevice->BlockMedia, &AtaDevice->Cache);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AtaBus: failed to initialize internal cache\n"));
+  }
 
 Done:
   if (NewDevicePathNode != NULL) {
@@ -1038,6 +1044,9 @@ BlockIoReadWrite (
   UINTN                             BlockSize;
   UINTN                             NumberOfBlocks;
   UINTN                             IoAlign;
+  EFI_LBA                           StartLba;
+  UINTN                             CacheBlocksCount;
+  UINT8                             CacheBuffer[BLOCK_IO_CACHE_SIZE];
 
   if (IsBlockIo2) {
    Media     = ((EFI_BLOCK_IO2_PROTOCOL *) This)->Media;
@@ -1081,13 +1090,49 @@ BlockIoReadWrite (
     return EFI_INVALID_PARAMETER;
   }
 
+  Status = BlockIoCacheGetCacheParameters (AtaDevice->Cache, Lba, &StartLba, BufferSize, &CacheBlocksCount);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "AtaBus: failed to get cache parameters\n"));
+    return Status;
+  }
+
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
-  //
-  // Invoke low level AtaDevice Access Routine.
-  //
-  Status = AccessAtaDevice (AtaDevice, Buffer, Lba, NumberOfBlocks, IsWrite, Token);
+  while (CacheBlocksCount--) {
+    Status = BlockIoCacheFind (AtaDevice->Cache, StartLba);
+    if (EFI_ERROR (Status) && Status != EFI_NOT_FOUND) {
+      goto Exit;
+    }
 
+    if (Status == EFI_NOT_FOUND) {
+      if (!IsWrite) {
+	Status = AccessAtaDevice (AtaDevice, CacheBuffer, StartLba, BLOCK_IO_CACHE_SIZE / BlockSize, IsWrite, Token);
+	if (EFI_ERROR (Status)) {
+	  DEBUG ((DEBUG_ERROR, "AtaBus: failed to send ATA command: %r\n", Status));
+	  goto Exit;
+	}
+	Status = BlockIoCacheAdd (AtaDevice->Cache, StartLba, sizeof (CacheBuffer), CacheBuffer);
+	if (EFI_ERROR (Status)) {
+	  DEBUG ((DEBUG_ERROR, "AtaBus: failed to add cache entry: %r\n", Status));
+	  goto Exit;
+	}
+      }
+    }
+
+    StartLba += BLOCK_IO_CACHE_SIZE / BlockSize;
+  }
+
+  if (!IsWrite) {
+    Status = BlockIoCacheRead (AtaDevice->Cache, Lba, BufferSize, Buffer);
+    if (EFI_ERROR (Status)) {
+      DEBUG ((DEBUG_ERROR, "AtaBus: failed to read from cache: %r\n", Status));
+      goto Exit;
+    }
+  } else {
+    Status = AccessAtaDevice (AtaDevice, Buffer, Lba, NumberOfBlocks, IsWrite, Token);
+  }
+
+Exit:
   gBS->RestoreTPL (OldTpl);
 
   return Status;

@@ -38,6 +38,7 @@
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/TimerLib.h>
 #include <Library/ReportStatusCodeLib.h>
+#include <Library/BlockIoCacheLib.h>
 
 #include <IndustryStandard/Atapi.h>
 
@@ -133,6 +134,8 @@ typedef struct {
   LIST_ENTRY                            AtaTaskList;
   LIST_ENTRY                            AtaSubTaskList;
   BOOLEAN                               Abort;
+
+  VOID                                  *Cache;
 } ATA_DEVICE;
 
 //

@@ -10,555 +10,311 @@
 
 #include <Library/BlockIoCacheLib.h>
 
-#define BIO_CACHE_DEBUG
+#define CACHE_ENTRY_SIGNATURE  SIGNATURE_32 ('B', 'I', 'O', 'C')
 
-#define NR_CACHE_BLOCKS(_BlockIoCache) (UINTN)(EFI_PAGE_SIZE / _BlockIoCache->BlockSize)
+typedef struct _CACHE_ENTRY   CACHE_ENTRY;
+typedef struct _CACHE_DATA    CACHE_DATA;
+typedef struct _PRIVATE_INFO  PRIVATE_INFO;
+
+struct _CACHE_DATA {
+  EFI_LBA                      Lba;
+  UINT8                        Buffer[BLOCK_IO_CACHE_SIZE];
+};
+
+struct _CACHE_ENTRY {
+  UINT32                        Signature;
+  LIST_ENTRY                    Link;
+  CACHE_DATA                    *Data;
+};
+
+struct _PRIVATE_INFO {
+  UINT32                       BlockSize;
+  UINT32                       IoAlign;
+  EFI_LBA                      LastLba;
+  CACHE_DATA                   *CacheData;
+  UINTN                        CacheEntsNo;
+  UINTN                        CacheBlocksNo;
+  UINTN                        CacheBlockAlign;
+  UINTN                        CacheCount;
+  LIST_ENTRY                   CacheList;
+  BOOLEAN                      CacheInitialized;
+};
 
 EFI_STATUS
 EFIAPI
 BlockIoCacheInitialize (
-  IN OUT  BLOCK_IO_CACHE      *BlockIoCache,
-  IN      EFI_BLOCK_IO_MEDIA  *Media
+  IN    EFI_BLOCK_IO_MEDIA  *Media,
+  OUT   VOID                **Cache
   )
 {
-  UINT16 CacheSize;
+  EFI_STATUS                Status;
+  PRIVATE_INFO              *Private;
+  UINT16                    CacheEntsNo;
 
-  if (Media == NULL || BlockIoCache == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
+  ASSERT (Media != NULL);
+  ASSERT (Cache != NULL);
 
-  if (BlockIoCache->CacheInitialized) {
-    return EFI_SUCCESS;
-  }
-
-  CacheSize = PcdGet16 (PcdBlockIoCacheSize);
-  if ((CacheSize & (CacheSize - 1)) != 0) {
-    return EFI_INVALID_PARAMETER;
-  }
-
-  BlockIoCache->CacheData = AllocateZeroPool (CacheSize * sizeof (BLOCK_IO_CACHE_DATA));
-  if (BlockIoCache->CacheData == NULL) {
+  Private = AllocatePool (sizeof (PRIVATE_INFO));
+  if (Private == NULL) {
     return EFI_OUT_OF_RESOURCES;
   }
 
-  BlockIoCache->BlockSize = Media->BlockSize;
-  BlockIoCache->IoAlign = Media->IoAlign;
-  BlockIoCache->LastLba = Media->LastBlock;
-  BlockIoCache->CacheSize = CacheSize;
-  BlockIoCache->CacheCount = 0;
-  InitializeListHead (&BlockIoCache->CacheList);
-  BlockIoCache->CacheInitialized = TRUE;
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: cache initialized - BlockSize: %ld\n", Media->BlockSize));
+  CacheEntsNo = PcdGet16 (PcdBlockIoCacheSize);
+  if ((CacheEntsNo & (CacheEntsNo - 1)) != 0) {
+    Status = EFI_INVALID_PARAMETER;
+    goto ERROR;
+  }
+
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: number of cache entries: %d\n", CacheEntsNo));
+
+  Private->CacheData = AllocatePool ((UINTN)CacheEntsNo * sizeof (CACHE_DATA));
+  if (Private->CacheData == NULL) {
+    Status = EFI_OUT_OF_RESOURCES;
+    goto ERROR;
+  }
+
+  Private->BlockSize = Media->BlockSize;
+  Private->IoAlign = Media->IoAlign;
+  Private->LastLba = Media->LastBlock;
+  Private->CacheEntsNo = (UINTN)CacheEntsNo;
+  Private->CacheBlocksNo = BLOCK_IO_CACHE_SIZE / Private->BlockSize;
+  Private->CacheBlockAlign = ~(Private->CacheBlocksNo - 1);
+  Private->CacheCount = 0;
+  InitializeListHead (&Private->CacheList);
+  Private->CacheInitialized = TRUE;
+
+  *Cache = Private;
+
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: cache initialized successfully\n"));
+
   return EFI_SUCCESS;
+
+ERROR:
+  FreePool (Private);
+  return Status;
+}
+
+LIST_ENTRY *
+FindCacheEntry (
+  IN   PRIVATE_INFO  *Private,
+  IN   EFI_LBA       Lba
+  )
+{
+  LIST_ENTRY         *List;
+  LIST_ENTRY         *Link;
+  CACHE_ENTRY        *Entry;
+
+  if (Private->CacheCount == 0) {
+    return NULL;
+  }
+
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: FindCacheEntry(%lld)\n", Lba));
+
+  List = &Private->CacheList;
+  for (Link = GetFirstNode (List); !IsNull (List, Link); Link = GetNextNode (List, Link)) {
+    Entry = CR (Link, CACHE_ENTRY, Link, CACHE_ENTRY_SIGNATURE);
+    if (Entry->Data->Lba == Lba) {
+      return Link;
+    }
+  }
+  return NULL;
+}
+
+VOID
+PrintLru (
+  IN   PRIVATE_INFO  *Private
+  )
+{
+  LIST_ENTRY         *List;
+  LIST_ENTRY         *Link;
+  CACHE_ENTRY        *Entry;
+
+  if (Private->CacheCount == 0) {
+    return;
+  }
+
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: LRU list:\n"));
+
+  List = &Private->CacheList;
+  for (Link = GetFirstNode (List); !IsNull (List, Link); Link = GetNextNode (List, Link)) {
+    Entry = CR (Link, CACHE_ENTRY, Link, CACHE_ENTRY_SIGNATURE);
+    DEBUG ((DEBUG_ERROR, "%lld ", Entry->Data->Lba));
+  }
+  DEBUG ((DEBUG_ERROR, "\n"));
 }
 
 EFI_STATUS
 EFIAPI
 BlockIoCacheGetCacheParameters (
-  IN      BLOCK_IO_CACHE          *BlockIoCache,
-  IN      EFI_LBA                 Lba,
-  OUT     EFI_LBA                 *AlignedLba,
-  IN      UINTN                   NumberOfBlocks,
-  OUT     UINTN                   *AlignedNumberOfBlocks
+  IN   VOID                       *Cache,
+  IN   EFI_LBA                    Lba,
+  OUT  EFI_LBA                    *AlignedLba,
+  IN   UINTN                      BufferSize,
+  OUT  UINTN                      *BlocksCount
   )
 {
-  UINTN CacheBlocksNo;
+  PRIVATE_INFO *Private;
 
-  if (BlockIoCache == NULL || AlignedLba == NULL || AlignedNumberOfBlocks == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
-  if (!BlockIoCache->CacheInitialized) {
-    return EFI_INVALID_PARAMETER;
-  }
+  ASSERT (Cache != NULL);
+  ASSERT (AlignedLba != NULL);
+  ASSERT (BlocksCount != NULL);
+  // TODO: check for other invalid params
 
-  CacheBlocksNo = NR_CACHE_BLOCKS (BlockIoCache);
+  Private = Cache;
 
-  if ((Lba % CacheBlocksNo) != 0) {
-    *AlignedLba = Lba & ~(CacheBlocksNo - 1);
-  } else {
-    *AlignedLba = Lba;
-  }
-
-  *AlignedNumberOfBlocks = (NumberOfBlocks + CacheBlocksNo - 1) / CacheBlocksNo;
-  if ((Lba - *AlignedLba) + NumberOfBlocks > CacheBlocksNo) {
-    (*AlignedNumberOfBlocks)++;
-  }
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: cache parameters:\n"
-	  "            Lba:                    %lld\n"
-	  "            AlignedLba:             %lld\n"
-	  "            NumberOfBlocks:         %d\n"
-	  "            AlignedNumberOfBlocks:  %d\n",
-	  Lba, *AlignedLba, NumberOfBlocks, *AlignedNumberOfBlocks));
+  *AlignedLba = Lba & Private->CacheBlockAlign;
+  *BlocksCount = ((Lba - *AlignedLba) + (BufferSize / Private->BlockSize) +
+		  Private->CacheBlocksNo - 1) / Private->CacheBlocksNo;
   return EFI_SUCCESS;
 }
 
 EFI_STATUS
 EFIAPI
-BlockIoCacheGetBlockSize (
-  IN      BLOCK_IO_CACHE         *BlockIoCache,
-  OUT     UINTN                  *BlockSize
+BlockIoCacheFind (
+  IN   VOID         *Cache,
+  IN   EFI_LBA      Lba
   )
 {
-  if (BlockIoCache == NULL || !BlockIoCache->CacheInitialized || BlockSize == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
-  *BlockSize = EFI_PAGE_SIZE;
-  return EFI_SUCCESS;
-}
+  PRIVATE_INFO      *Private;
+  LIST_ENTRY        *Link;
+  CACHE_ENTRY       *Entry;
 
-EFI_STATUS
-GetNewBlockInfo (
-  IN      BLOCK_IO_CACHE       *BlockIoCache,
-  IN      EFI_LBA              Lba,
-  IN      VOID                 *Data,
-  IN OUT  BLOCK_IO_CACHE_DATA  *BlockInfo
-  )
-{
-  BlockInfo->Data = Data;
-  BlockInfo->Lba = Lba;
-  return EFI_SUCCESS;
-}
+  ASSERT (Cache != NULL);
+  // TODO: check for other invalid params
 
-EFI_STATUS
-GetNewCacheEntry (
-  IN   BLOCK_IO_CACHE_DATA   *BlockInfo,
-  IN   BLOCK_IO_CACHE_ENTRY  **CacheEntry
-  )
-{
-  BLOCK_IO_CACHE_ENTRY *NewCacheEntry;
+  Private = Cache;
 
-  NewCacheEntry = AllocatePool (sizeof (BLOCK_IO_CACHE_ENTRY));
-  if (NewCacheEntry == NULL) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-  NewCacheEntry->Signature = BLOCK_IO_CACHE_ENTRY_SIGNATURE;
-  NewCacheEntry->BlockInfo = BlockInfo;
-  *CacheEntry = NewCacheEntry;
-  return EFI_SUCCESS;
-}
-
-EFI_STATUS
-EFIAPI
-BlockIoCacheRead2 (
-  IN OUT  BLOCK_IO_CACHE  *BlockIoCache,
-  IN      EFI_LBA         CacheLba,
-  IN      UINTN           CacheNumberOfBlocks,
-  IN OUT  EFI_LBA         *Lba,
-  IN      UINTN           NumberOfBlocks,
-  IN      VOID            *Buffer,
-  IN OUT  UINTN           *BufferOffset
-  )
-{
-  EFI_STATUS              Status;
-  LIST_ENTRY              *CacheList;
-  LIST_ENTRY              *Link;
-  BLOCK_IO_CACHE_ENTRY    *CacheEntry;
-  BLOCK_IO_CACHE_DATA     *BlockInfo;
-  UINTN                   DataOffset;
-  UINTN                   CacheBlocksNo;
-  UINTN                   BlocksToCopy;
-
-  if (BlockIoCache == NULL || Lba == NULL || Buffer == NULL || BufferOffset == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
-
-  if (!BlockIoCache->CacheInitialized) {
-    return EFI_INVALID_PARAMETER;
-  }
-
-  DEBUG ((DEBUG_ERROR,
-	  "BlockIoCache: CacheLba %lld CacheNumberOfBlocks %d Lba %lld NumberOfBlocks %d\n",
-	  CacheLba, CacheNumberOfBlocks, *Lba, NumberOfBlocks));
-
-  CacheBlocksNo = NR_CACHE_BLOCKS (BlockIoCache);
-
-  if ((*Lba - CacheLba) + NumberOfBlocks > CacheBlocksNo) {
-    BlocksToCopy = CacheBlocksNo - (*Lba - CacheLba);
-  } else {
-    BlocksToCopy = NumberOfBlocks;
-  }
-
-  Status = EFI_NOT_FOUND;
-
-  if (BlockIoCache->CacheCount == 0) {
-    DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache miss\n", CacheLba));
-    goto Done;
-  }
-
-  CacheList = &BlockIoCache->CacheList;
-  CacheEntry = NULL;
-  BlockInfo = NULL;
-  for (Link = GetFirstNode (CacheList); !IsNull (CacheList, Link);
-       Link = GetNextNode (CacheList, Link)) {
-    CacheEntry = CR (Link, BLOCK_IO_CACHE_ENTRY, Link, BLOCK_IO_CACHE_ENTRY_SIGNATURE);
-    BlockInfo = CacheEntry->BlockInfo;
-    if (BlockInfo->Lba == CacheLba) {
-      break;
-    }
-  }
-
-  if (IsNull (CacheList, Link)) {
-    DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache miss\n", CacheLba));
-    goto Done;
-  }
-
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache hit\n", CacheLba));
-
-  Status = EFI_SUCCESS;
-
-  if ((*Lba & (CacheBlocksNo - 1)) != 0) {
-    DataOffset = (*Lba - CacheLba) * BlockIoCache->BlockSize;
-  } else {
-    DataOffset = 0;
-  }
-
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: DataOffset %d BufferOffset %d\n", DataOffset, *BufferOffset));
-
-  CopyMem (
-    (VOID *)((UINTN)Buffer + *BufferOffset),
-    (VOID *)((UINTN)BlockInfo->Data + DataOffset),
-    BlocksToCopy * BlockIoCache->BlockSize
-    );
-
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: copied %d blocks from cache\n", BlocksToCopy));
-
-  RemoveEntryList (Link);
-  InsertHeadList (CacheList, &CacheEntry->Link);
-
-  *BufferOffset += BlocksToCopy * BlockIoCache->BlockSize;
-
-Done:
-  *Lba += BlocksToCopy;
-
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: new values: BlocksToCopy %d Lba %lld\n", BlocksToCopy, *Lba));
-
-  return Status;
-}
-
-EFI_STATUS
-EFIAPI
-BlockIoCacheRead (
-  IN OUT  BLOCK_IO_CACHE  *BlockIoCache,
-  IN      EFI_LBA         CacheLba,
-  IN      UINTN           CacheNumberOfBlocks,
-  IN      EFI_LBA         Lba,
-  IN      UINTN           NumberOfBlocks,
-  IN      VOID            *Buffer
-  )
-{
-  LIST_ENTRY              *CacheList;
-  LIST_ENTRY              *Link;
-  BLOCK_IO_CACHE_ENTRY    *CacheEntry;
-  BLOCK_IO_CACHE_DATA     *BlockInfo;
-  UINTN                   DataOffset;
-  UINTN                   BufferOffset;
-  UINTN                   CacheBlocksNo;
-  UINTN                   BlocksToCopy;
-
-  if (BlockIoCache == NULL || Buffer == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
-
-  if (!BlockIoCache->CacheInitialized) {
-    return EFI_INVALID_PARAMETER;
-  }
-
-  if (BlockIoCache->CacheCount == 0) {
-    DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache miss\n", Lba));
+  Link = FindCacheEntry (Private, Lba);
+  if (Link == NULL) {
+    DEBUG ((DEBUG_ERROR, "BlockIoCache: cache miss on LBA %lld\n", Lba));
     return EFI_NOT_FOUND;
   }
 
-  DEBUG ((DEBUG_ERROR,
-	  "BlockIoCache: CacheLba %lld CacheNumberOfBlocks %d Lba %lld NumberOfBlocks %d\n",
-	  CacheLba, CacheNumberOfBlocks, Lba, NumberOfBlocks));
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: cache hit on LBA %lld\n", Lba));
 
-  CacheList = &BlockIoCache->CacheList;
-  CacheBlocksNo = NR_CACHE_BLOCKS (BlockIoCache);
-  BufferOffset = 0;
-  while (NumberOfBlocks > 0) {
-    CacheEntry = NULL;
-    BlockInfo = NULL;
-    for (Link = GetFirstNode (CacheList); !IsNull (CacheList, Link);
-	 Link = GetNextNode (CacheList, Link)) {
-      CacheEntry = CR (Link, BLOCK_IO_CACHE_ENTRY, Link, BLOCK_IO_CACHE_ENTRY_SIGNATURE);
-      BlockInfo = CacheEntry->BlockInfo;
-      if (BlockInfo->Lba == CacheLba) {
-	break;
-      }
-    }
-
-    if (IsNull (CacheList, Link)) {
-      DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache miss\n", CacheLba));
-      return EFI_NOT_FOUND;
-    }
-
-    DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache hit\n", CacheLba));
-
-    if ((Lba - CacheLba) + NumberOfBlocks > CacheBlocksNo) {
-      BlocksToCopy = CacheBlocksNo - (Lba - CacheLba);
-    } else {
-      BlocksToCopy = NumberOfBlocks;
-    }
-
-    if ((Lba & (CacheBlocksNo - 1)) != 0) {
-      DataOffset = (Lba - CacheLba) * BlockIoCache->BlockSize;
-    } else {
-      DataOffset = 0;
-    }
-
-    CopyMem (
-      (VOID *)((UINTN)Buffer + BufferOffset),
-      (VOID *)((UINTN)BlockInfo->Data + DataOffset),
-      BlocksToCopy * BlockIoCache->BlockSize
-      );
-    RemoveEntryList (Link);
-    InsertHeadList (CacheList, &CacheEntry->Link);
-
-    BufferOffset += BlocksToCopy * BlockIoCache->BlockSize;
-    NumberOfBlocks -= BlocksToCopy;
-    Lba += BlocksToCopy;
-    CacheLba += CacheBlocksNo;
-  }
+  Entry = CR (Link, CACHE_ENTRY, Link, CACHE_ENTRY_SIGNATURE);
+  RemoveEntryList (Link);
+  InsertHeadList (&Private->CacheList, &Entry->Link);
   return EFI_SUCCESS;
-}
-
-EFI_STATUS
-EFIAPI
-BlockIoCacheAdd2 (
-  IN OUT  BLOCK_IO_CACHE  *BlockIoCache,
-  IN      EFI_LBA         Lba,
-  IN      VOID            *Buffer
-  )
-{
-  LIST_ENTRY              *CacheList;
-  UINTN                   CacheBlocksNo;
-  EFI_STATUS              Status;
-  BLOCK_IO_CACHE_DATA     *BlockInfo;
-  BLOCK_IO_CACHE_ENTRY    *CacheEntry;
-  BLOCK_IO_CACHE_ENTRY    *NewCacheEntry;
-
-  if (BlockIoCache == NULL || Buffer == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
-  if (!BlockIoCache->CacheInitialized) {
-    return EFI_INVALID_PARAMETER;
-  }
-
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: Lba %lld\n", Lba));
-
-  CacheList = &BlockIoCache->CacheList;
-  CacheBlocksNo = NR_CACHE_BLOCKS (BlockIoCache);
-  if (BlockIoCache->CacheCount < BlockIoCache->CacheSize) {
-    BlockInfo = &BlockIoCache->CacheData[BlockIoCache->CacheCount];
-    BlockInfo->Data = Buffer;
-    BlockInfo->Lba = Lba;
-
-    BlockIoCache->CacheCount++;
-
-    Status = GetNewCacheEntry (BlockInfo, &NewCacheEntry);
-    if (EFI_ERROR (Status)) {
-      goto ERROR;
-    }
-  } else {
-    CacheEntry = CR (CacheList->BackLink, BLOCK_IO_CACHE_ENTRY, Link, BLOCK_IO_CACHE_ENTRY_SIGNATURE);
-    RemoveEntryList (CacheList->BackLink);
-
-    BlockInfo = CacheEntry->BlockInfo;
-
-    BlockInfo->Lba = Lba;
-    FreePool (BlockInfo->Data);
-    BlockInfo->Data = Buffer;
-
-    NewCacheEntry = CacheEntry;
-  }
-#ifdef BIO_CACHE_DEBUG
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: insert new cache entry (LBA %lld)\n", BlockInfo->Lba));
-#endif
-  InsertHeadList (CacheList, &NewCacheEntry->Link);
-
-  return EFI_SUCCESS;
-
-ERROR:
-  if (NewCacheEntry != NULL) {
-    FreePool (NewCacheEntry);
-  }
-  return Status;
 }
 
 EFI_STATUS
 EFIAPI
 BlockIoCacheAdd (
-  IN OUT  BLOCK_IO_CACHE  *BlockIoCache,
-  IN      EFI_LBA         Lba,
-  IN      UINTN           NumberOfBlocks,
-  IN      VOID            *Buffer
+  IN   VOID        *Cache,
+  IN   EFI_LBA     Lba,
+  IN   UINTN       BufferSize,
+  IN   VOID        *Buffer
   )
 {
-  LIST_ENTRY              *CacheList;
-  UINTN                   CacheBlocksNo;
-  LIST_ENTRY              *Link;
-  EFI_STATUS              Status;
-  BLOCK_IO_CACHE_DATA     *BlockInfo;
-  BLOCK_IO_CACHE_ENTRY    *CacheEntry;
-  BLOCK_IO_CACHE_ENTRY    *NewCacheEntry;
+  PRIVATE_INFO     *Private;
+  CACHE_DATA       *Data;
+  CACHE_ENTRY      *NewEntry;
 
-  if (BlockIoCache == NULL || Buffer == NULL) {
+  ASSERT (Cache != NULL);
+  ASSERT (Buffer != NULL);
+
+  Private = Cache;
+
+  if (BufferSize != BLOCK_IO_CACHE_SIZE) {
     return EFI_INVALID_PARAMETER;
   }
-  if (!BlockIoCache->CacheInitialized) {
-    return EFI_INVALID_PARAMETER;
+
+  if (Private->CacheCount < Private->CacheEntsNo) {
+    Data = &Private->CacheData[Private->CacheCount];
+    Data->Lba = Lba;
+
+    NewEntry = AllocatePool (sizeof (CACHE_ENTRY));
+    if (NewEntry == NULL) {
+      return EFI_INVALID_PARAMETER;
+    }
+    NewEntry->Signature = CACHE_ENTRY_SIGNATURE;
+    NewEntry->Data = Data;
+
+    Private->CacheCount++;
+  } else {
+    NewEntry = CR (Private->CacheList.BackLink, CACHE_ENTRY, Link, CACHE_ENTRY_SIGNATURE);
+    RemoveEntryList (Private->CacheList.BackLink);
+    NewEntry->Data->Lba = Lba;
   }
 
-  DEBUG ((DEBUG_ERROR, "BlockIoCache: Lba %lld NumberOfBlocks %d\n", Lba, NumberOfBlocks));
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: add new cache entry for LBA %lld\n", Lba));
+  CopyMem (NewEntry->Data->Buffer, Buffer, BufferSize);
+  InsertHeadList (&Private->CacheList, &NewEntry->Link);
 
-  CacheList = &BlockIoCache->CacheList;
-  CacheBlocksNo = NR_CACHE_BLOCKS (BlockIoCache);
-  for (;;) {
-    for (Link = GetFirstNode (CacheList); !IsNull (CacheList, Link);
-	 Link = GetNextNode (CacheList, Link)) {
-      CacheEntry = CR (Link, BLOCK_IO_CACHE_ENTRY, Link, BLOCK_IO_CACHE_ENTRY_SIGNATURE);
-      if (CacheEntry->BlockInfo->Lba == Lba) {
-	DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld is already cached\n", CacheEntry->BlockInfo->Lba));
-	RemoveEntryList (Link);
-	InsertHeadList (CacheList, &CacheEntry->Link);
-	goto NEXT_LBA;
-      }
-    }
-
-    NewCacheEntry = NULL;
-    if (BlockIoCache->CacheCount < BlockIoCache->CacheSize) {
-      BlockInfo = &BlockIoCache->CacheData[BlockIoCache->CacheCount];
-      BlockInfo->Data = Buffer;
-      BlockInfo->Lba = Lba;
-
-      BlockIoCache->CacheCount++;
-
-      Status = GetNewCacheEntry (BlockInfo, &NewCacheEntry);
-      if (EFI_ERROR (Status)) {
-	goto ERROR;
-      }
-    } else {
-      CacheEntry = CR (CacheList->BackLink, BLOCK_IO_CACHE_ENTRY, Link, BLOCK_IO_CACHE_ENTRY_SIGNATURE);
-      RemoveEntryList (CacheList->BackLink);
-
-      BlockInfo = CacheEntry->BlockInfo;
-      BlockInfo->Lba = Lba;
-      CopyMem (BlockInfo->Data, Buffer, EFI_PAGE_SIZE);
-
-      NewCacheEntry = CacheEntry;
-    }
-#ifdef BIO_CACHE_DEBUG
-    DEBUG ((DEBUG_ERROR, "BlockIoCache: insert new cache entry (LBA %lld)\n", BlockInfo->Lba));
-#endif
-    InsertHeadList (CacheList, &NewCacheEntry->Link);
-
-  NEXT_LBA:
-    if (--NumberOfBlocks == 0) {
-      break;
-    }
-    Buffer = (VOID *)((UINTN)Buffer + EFI_PAGE_SIZE);
-    Lba += CacheBlocksNo;
-  }
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: cache count %d\n", Private->CacheCount));
 
   return EFI_SUCCESS;
-
-ERROR:
-  if (NewCacheEntry != NULL) {
-    FreePool (NewCacheEntry);
-  }
-  return Status;
 }
 
 EFI_STATUS
 EFIAPI
-BlockIoCacheInvalidate (
-  IN OUT  BLOCK_IO_CACHE  *BlockIoCache,
-  IN      EFI_LBA         CacheLba,
-  IN      UINTN           CacheNumberOfBlocks,
-  IN      EFI_LBA         Lba,
-  IN      UINTN           NumberOfBlocks,
-  IN      VOID            *Buffer
+BlockIoCacheRead (
+  IN   VOID         *Cache,
+  IN   EFI_LBA      Lba,
+  IN   UINTN        BufferSize,
+  OUT  VOID         *Buffer
   )
 {
-  LIST_ENTRY              *CacheList;
-  LIST_ENTRY              *Link;
-  BLOCK_IO_CACHE_ENTRY    *CacheEntry;
-  BLOCK_IO_CACHE_DATA     *BlockInfo;
-  UINTN                   DataOffset;
-  UINTN                   BufferOffset;
-  UINTN                   CacheBlocksNo;
-  UINTN                   BlocksToCopy;
+  PRIVATE_INFO      *Private;
+  EFI_LBA           CacheLba;
+  UINTN             BlocksNo;
+  UINTN             BlocksCount;
+  UINTN             CacheBlocksCount;
+  LIST_ENTRY        *Link;
+  UINTN             EntryOffset;
+  UINTN             EntrySize;
+  CACHE_ENTRY       *Entry;
 
-  if (BlockIoCache == NULL || Buffer == NULL) {
-    return EFI_INVALID_PARAMETER;
-  }
+  ASSERT (Cache != NULL);
 
-  if (!BlockIoCache->CacheInitialized || BlockIoCache->CacheCount == 0) {
-    return EFI_SUCCESS;
-  }
+  // TODO: check for other invalid params
 
-  DEBUG ((DEBUG_ERROR,
-	  "BlockIoCache: CacheLba %lld CacheNumberOfBlocks %d Lba %lld NumberOfBlocks %d\n",
-	  CacheLba, CacheNumberOfBlocks, Lba, NumberOfBlocks));
+  Private = Cache;
 
-  CacheList = &BlockIoCache->CacheList;
-  CacheBlocksNo = NR_CACHE_BLOCKS (BlockIoCache);
-  BufferOffset = 0;
-  while (NumberOfBlocks > 0) {
-    CacheEntry = NULL;
-    BlockInfo = NULL;
-    for (Link = GetFirstNode (CacheList); !IsNull (CacheList, Link);
-	 Link = GetNextNode (CacheList, Link)) {
-      CacheEntry = CR (Link, BLOCK_IO_CACHE_ENTRY, Link, BLOCK_IO_CACHE_ENTRY_SIGNATURE);
-      BlockInfo = CacheEntry->BlockInfo;
-      if (BlockInfo->Lba == CacheLba) {
-	break;
-      }
-    }
+  PrintLru (Private);
 
-    if ((Lba - CacheLba) + NumberOfBlocks > CacheBlocksNo) {
-      BlocksToCopy = CacheBlocksNo - (Lba - CacheLba);
+  CacheLba = Lba & Private->CacheBlockAlign;
+  BlocksNo = BufferSize / Private->BlockSize;
+  BlocksCount = 0;
+  CacheBlocksCount = ((Lba - CacheLba) + BlocksNo + Private->CacheBlocksNo - 1) / Private->CacheBlocksNo;
+  DEBUG ((DEBUG_ERROR, "BlockIoCache: start cache LBA %d - BlocksNo %d - CacheBlocksCount %d\n",
+          CacheLba, BlocksNo, CacheBlocksCount));
+  while (CacheBlocksCount--) {
+    Link = FindCacheEntry (Private, CacheLba);
+    ASSERT (Link != NULL);
+
+    Entry = CR (Link, CACHE_ENTRY, Link, CACHE_ENTRY_SIGNATURE);
+
+    if ((Lba & (Private->CacheBlocksNo - 1)) == 0) {
+      EntryOffset = 0;
     } else {
-      BlocksToCopy = NumberOfBlocks;
+      EntryOffset = (Lba - CacheLba) * Private->BlockSize;
     }
 
-    if (IsNull (CacheList, Link)) {
-      goto NEXT_LBA;
-    }
-
-    DEBUG ((DEBUG_ERROR, "BlockIoCache: invalidate LBA %lld\n", Lba));
-
-    if ((Lba & (CacheBlocksNo - 1)) != 0) {
-      DataOffset = (Lba - CacheLba) * BlockIoCache->BlockSize;
+    if (BlocksCount + Private->CacheBlocksNo > BlocksNo) {
+      EntrySize = (BlocksNo - BlocksCount) * Private->BlockSize;
     } else {
-      DataOffset = 0;
+      EntrySize = BLOCK_IO_CACHE_SIZE;
     }
+    if (EntrySize + EntryOffset > BLOCK_IO_CACHE_SIZE) {
+      EntrySize -= EntryOffset;
+    }
+
+    DEBUG ((DEBUG_ERROR, "BlockIoCache: LBA %lld - cache LBA %lld - EntryOffset %d - EntrySize %d\n",
+            Lba, CacheLba, EntryOffset, EntrySize));
+    DEBUG ((DEBUG_ERROR, "BlockIoCache: copy %d bytes from cached LBA %lld\n", EntrySize, CacheLba));
 
     CopyMem (
-      (VOID *)((UINTN)BlockInfo->Data + DataOffset),
-      (VOID *)((UINTN)Buffer + BufferOffset),
-      BlocksToCopy * BlockIoCache->BlockSize
+      (VOID *)((UINTN)Buffer + (BlocksCount * Private->BlockSize)),
+      &Entry->Data->Buffer[EntryOffset],
+      EntrySize
       );
-    RemoveEntryList (Link);
-    InsertHeadList (CacheList, &CacheEntry->Link);
 
-  NEXT_LBA:
-    BufferOffset += BlocksToCopy * BlockIoCache->BlockSize;
-    NumberOfBlocks -= BlocksToCopy;
-    Lba += BlocksToCopy;
-    CacheLba += CacheBlocksNo;
+    BlocksCount += EntrySize / Private->BlockSize;
+    Lba += EntrySize / Private->BlockSize;
+    CacheLba += Private->CacheBlocksNo;
   }
-  return EFI_SUCCESS;
-}
 
-EFI_STATUS
-EFIAPI
-BlockIoCacheCleanup (
-  IN OUT BLOCK_IO_CACHE *BlockIoCache
-  )
-{
-  //
-  // TODO: implement me
-  //
   return EFI_SUCCESS;
 }
