@@ -38,6 +38,7 @@
   DEFINE HTTP_BOOT_ENABLE        = FALSE
   DEFINE SMM_REQUIRE             = FALSE
   DEFINE USE_OLD_PCI_HOST        = FALSE
+  DEFINE RAMDISK_SUPPORT_ENABLE  = FALSE
 
 [BuildOptions]
   GCC:*_UNIXGCC_*_CC_FLAGS             = -DMDEPKG_NDEBUG
@@ -293,7 +294,7 @@
   DebugAgentLib|SourceLevelDebugPkg/Library/DebugAgent/DxeDebugAgentLib.inf
 !endif
   QemuBootOrderLib|OvmfPkg/Library/QemuBootOrderLib/QemuBootOrderLib.inf
-!if $(SECURE_BOOT_ENABLE) == TRUE
+!if $(SECURE_BOOT_ENABLE) == TRUE OR $(RAMDISK_SUPPORT_ENABLE) == TRUE
   FileExplorerLib|MdeModulePkg/Library/FileExplorerLib/FileExplorerLib.inf
 !endif
 !if $(USE_OLD_PCI_HOST) == FALSE
@@ -603,6 +604,9 @@
   MdeModulePkg/Universal/PrintDxe/PrintDxe.inf
   MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
   MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
+!if $(RAMDISK_SUPPORT_ENABLE) == TRUE
+  MdeModulePkg/Universal/Disk/RamDiskDxe/RamDiskDxe.inf
+!endif
   MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
   MdeModulePkg/Bus/Scsi/ScsiBusDxe/ScsiBusDxe.inf
   MdeModulePkg/Bus/Scsi/ScsiDiskDxe/ScsiDiskDxe.inf
