@@ -2,6 +2,7 @@
   PCI Rom supporting funtions implementation for PCI Bus module.
 
 Copyright (c) 2006 - 2015, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2016 HP Development Company, L.P.<BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
 which accompanies this distribution.  The full text of the license may be found at
@@ -390,8 +391,8 @@ LoadOpRomImage (
   EFI_STATUS                RetStatus;
   BOOLEAN                   FirstCheck;
   UINT8                     *Image;
-  PCI_EXPANSION_ROM_HEADER  *RomHeader;
-  PCI_DATA_STRUCTURE        *RomPcir;
+  PCI_EXPANSION_ROM_HEADER  RomHeader;
+  PCI_DATA_STRUCTURE        RomPcir;
   UINT64                    RomSize;
   UINT64                    RomImageSize;
   UINT32                    LegacyImageLength;
@@ -423,19 +424,6 @@ LoadOpRomImage (
     //
     RomBarIndex = PCI_BRIDGE_ROMBAR;
   }
-  //
-  // Allocate memory for Rom header and PCIR
-  //
-  RomHeader = AllocatePool (sizeof (PCI_EXPANSION_ROM_HEADER));
-  if (RomHeader == NULL) {
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  RomPcir = AllocatePool (sizeof (PCI_DATA_STRUCTURE));
-  if (RomPcir == NULL) {
-    FreePool (RomHeader);
-    return EFI_OUT_OF_RESOURCES;
-  }
 
   RomBar = (UINT32) RomBase;
 
@@ -455,10 +443,10 @@ LoadOpRomImage (
                                       EfiPciWidthUint8,
                                       RomBarOffset,
                                       sizeof (PCI_EXPANSION_ROM_HEADER),
-                                      (UINT8 *) RomHeader
+                                      (VOID *) &RomHeader
                                       );
 
-    if (RomHeader->Signature != PCI_EXPANSION_ROM_HEADER_SIGNATURE) {
+    if (RomHeader.Signature != PCI_EXPANSION_ROM_HEADER_SIGNATURE) {
       RomBarOffset = RomBarOffset + 512;
       if (FirstCheck) {
         break;
@@ -469,7 +457,7 @@ LoadOpRomImage (
     }
 
     FirstCheck  = FALSE;
-    OffsetPcir  = RomHeader->PcirOffset;
+    OffsetPcir  = RomHeader.PcirOffset;
     //
     // If the pointer to the PCI Data Structure is invalid, no further images can be located. 
     // The PCI Data Structure must be DWORD aligned. 
@@ -484,24 +472,24 @@ LoadOpRomImage (
                                       EfiPciWidthUint8,
                                       RomBarOffset + OffsetPcir,
                                       sizeof (PCI_DATA_STRUCTURE),
-                                      (UINT8 *) RomPcir
+                                      (VOID *) &RomPcir
                                       );
     //
     // If a valid signature is not present in the PCI Data Structure, no further images can be located.
     //
-    if (RomPcir->Signature != PCI_DATA_STRUCTURE_SIGNATURE) {
+    if (RomPcir.Signature != PCI_DATA_STRUCTURE_SIGNATURE) {
       break;
     }
-    if (RomImageSize + RomPcir->ImageLength * 512 > RomSize) {
+    if (RomImageSize + RomPcir.ImageLength * 512 > RomSize) {
       break;
     }
-    if (RomPcir->CodeType == PCI_CODE_TYPE_PCAT_IMAGE) {
+    if (RomPcir.CodeType == PCI_CODE_TYPE_PCAT_IMAGE) {
       CodeType = PCI_CODE_TYPE_PCAT_IMAGE;
-      LegacyImageLength = ((UINT32)((EFI_LEGACY_EXPANSION_ROM_HEADER *)RomHeader)->Size512) * 512;
+      LegacyImageLength = ((UINT32)((EFI_LEGACY_EXPANSION_ROM_HEADER *)&RomHeader)->Size512) * 512;
     }
-    Indicator     = RomPcir->Indicator;
-    RomImageSize  = RomImageSize + RomPcir->ImageLength * 512;
-    RomBarOffset  = RomBarOffset + RomPcir->ImageLength * 512;
+    Indicator     = RomPcir.Indicator;
+    RomImageSize  = RomImageSize + RomPcir.ImageLength * 512;
+    RomBarOffset  = RomBarOffset + RomPcir.ImageLength * 512;
   } while (((Indicator & 0x80) == 0x00) && ((RomBarOffset - RomBar) < RomSize));
 
   //
@@ -517,8 +505,6 @@ LoadOpRomImage (
     Image     = AllocatePool ((UINT32) RomImageSize);
     if (Image == NULL) {
       RomDecode (PciDevice, RomBarIndex, RomBar, FALSE);
-      FreePool (RomHeader);
-      FreePool (RomPcir);
       return EFI_OUT_OF_RESOURCES;
     }
 
@@ -554,12 +540,6 @@ LoadOpRomImage (
     (UINT64) (UINTN) PciDevice->PciIo.RomImage,
     PciDevice->PciIo.RomSize
     );
-
-  //
-  // Free allocated memory
-  //
-  FreePool (RomHeader);
-  FreePool (RomPcir);
 
   return RetStatus;
 }
