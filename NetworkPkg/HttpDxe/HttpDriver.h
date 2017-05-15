@@ -88,6 +88,7 @@ extern EFI_HTTP_UTILITIES_PROTOCOL  *mHttpUtilities;
 #include "HttpProto.h"
 #include "HttpsSupport.h"
 #include "HttpDns.h"
+#include "ProxySupport.h"
 
 typedef struct {
   EFI_SERVICE_BINDING_PROTOCOL  *ServiceBinding;

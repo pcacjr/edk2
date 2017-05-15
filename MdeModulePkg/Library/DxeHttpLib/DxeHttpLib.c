@@ -531,6 +531,64 @@ HttpUrlGetHostName (
   return EFI_SUCCESS;
 }
 
+/**
+  Get the Scheme from a HTTP URL.
+
+  This function will return the Scheme according to the Url and previous parse result ,and
+  it is the caller's responsibility to free the buffer returned in *Scheme.
+
+  @param[in]    Url                The pointer to a HTTP URL string.
+  @param[in]    UrlParser          URL Parse result returned by NetHttpParseUrl().
+  @param[out]   Scheme             Pointer to a buffer to store the Scheme.
+
+  @retval EFI_SUCCESS              Successfully get the required component.
+  @retval EFI_INVALID_PARAMETER    Uri is NULL or HostName is NULL or UrlParser is invalid.
+  @retval EFI_NOT_FOUND            No scheme component in the URL.
+  @retval EFI_OUT_OF_RESOURCES     Could not allocate needed resources.
+  
+**/
+EFI_STATUS
+EFIAPI
+HttpUrlGetScheme (
+  IN      CHAR8              *Url,
+  IN      VOID               *UrlParser,
+     OUT  CHAR8              **Scheme
+  )
+{
+  CHAR8                *Str;
+  EFI_STATUS           Status;
+  UINT32               ResultLength;
+  HTTP_URL_PARSER      *Parser;
+
+  if (Url == NULL || UrlParser == NULL || Scheme == NULL) {
+    return EFI_INVALID_PARAMETER;
+  }
+
+  Parser = (HTTP_URL_PARSER *)UrlParser;
+
+  if ((Parser->FieldBitMap & BIT (HTTP_URI_FIELD_SCHEME)) == 0) {
+    return EFI_NOT_FOUND;
+  }
+
+  Str = AllocatePool (Parser->FieldData[HTTP_URI_FIELD_SCHEME].Length + 1);
+  if (Str == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = UriPercentDecode (
+             Url + Parser->FieldData[HTTP_URI_FIELD_SCHEME].Offset,
+             Parser->FieldData[HTTP_URI_FIELD_SCHEME].Length,
+             Str,
+             &ResultLength
+             );
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Str[ResultLength] = '\0';
+  *Scheme = Str;
+  return EFI_SUCCESS;
+}
 
 /**
   Get the IPv4 address from a HTTP URL.

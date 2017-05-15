@@ -157,6 +157,15 @@ typedef struct _HTTP_PROTOCOL {
   EFI_HTTPv4_ACCESS_POINT       IPv4Node;
   EFI_HTTPv6_ACCESS_POINT       Ipv6Node;
 
+  //
+  // Proxy support
+  //
+  struct {
+    CHAR8                       *Scheme;
+    CHAR8                       *HostName;
+    UINT16                      RemotePort;
+  } Proxy;
+
   NET_MAP                       TxTokens;
   NET_MAP                       RxTokens;
 

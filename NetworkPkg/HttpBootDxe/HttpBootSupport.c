@@ -753,6 +753,8 @@ HttpIoCreateIo (
     IP6_COPY_ADDRESS (&Http6AccessPoint.LocalAddress, &ConfigData->Config6.LocalIp);
     HttpConfigData.AccessPoint.IPv6Node = &Http6AccessPoint;
   }
+
+  HttpConfigData.ProxyUrl = L"http://www.asgard.com:8888";
   
   Status = Http->Configure (Http, &HttpConfigData);
   if (EFI_ERROR (Status)) {

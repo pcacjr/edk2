@@ -135,6 +135,8 @@ EfiHttpConfigure (
 {
   HTTP_PROTOCOL                 *HttpInstance;
   EFI_STATUS                    Status;
+  CHAR8                         *ProxyUrl;
+  UINTN                         ProxyUrlLength;
   
   //
   // Check input parameters.
@@ -174,6 +176,25 @@ EfiHttpConfigure (
         HttpConfigData->AccessPoint.IPv4Node,
         sizeof (HttpInstance->IPv4Node)
         );
+    }
+
+    if (HttpConfigData->ProxyUrl != NULL) {
+      ProxyUrlLength = StrLen (HttpConfigData->ProxyUrl) + 1;
+      ProxyUrl = AllocateZeroPool (ProxyUrlLength * sizeof (CHAR8));
+      if (ProxyUrl == NULL) {
+        return EFI_OUT_OF_RESOURCES;
+      }
+
+      UnicodeStrToAsciiStrS (HttpConfigData->ProxyUrl, ProxyUrl, ProxyUrlLength);
+
+      Status = ParseProxyUrl (ProxyUrl,
+                              &HttpInstance->Proxy.Scheme,
+                              &HttpInstance->Proxy.HostName,
+                              &HttpInstance->Proxy.RemotePort);
+      FreePool (ProxyUrl);
+      if (EFI_ERROR (Status)) {
+        return EFI_INVALID_PARAMETER;
+      }
     }
     
     //
@@ -250,6 +271,7 @@ EfiHttpRequest (
   CHAR8                         *FileUrl;
   UINTN                         RequestMsgSize;
   EFI_HANDLE                    ImageHandle;
+  BOOLEAN                       UseProxy;
 
   //
   // Initializations
@@ -285,6 +307,9 @@ EfiHttpRequest (
 
   HttpInstance = HTTP_INSTANCE_FROM_PROTOCOL (This);
   ASSERT (HttpInstance != NULL);
+
+  UseProxy = HttpInstance->Proxy.Scheme != NULL &&
+    HttpInstance->Proxy.HostName != NULL;
 
   //
   // Capture the method into HttpInstance.
@@ -353,7 +378,12 @@ EfiHttpRequest (
     // From the information in Url, the HTTP instance will 
     // be able to determine whether to use http or https.
     //
-    HttpInstance->UseHttps = IsHttpsUrl (Url);
+    if ((UseProxy && AsciiStrCmp (HttpInstance->Proxy.Scheme, "https") == 0) ||
+        IsHttpsUrl (Url)) {
+      HttpInstance->UseHttps = TRUE;
+    } else {
+      HttpInstance->UseHttps = FALSE;
+    }
 
     //
     // HTTP is disabled, return directly if the URI is not HTTPS.
@@ -390,26 +420,39 @@ EfiHttpRequest (
       TlsConfigure = TRUE;
     }
 
-    UrlParser = NULL;
-    Status = HttpParseUrl (Url, (UINT32) AsciiStrLen (Url), FALSE, &UrlParser);
-    if (EFI_ERROR (Status)) {
-      goto Error1;
-    }
+    if (UseProxy) {
+      HostNameSize = AsciiStrSize (HttpInstance->Proxy.HostName);
+      HostName = AllocatePool (HostNameSize);
+      if (HostName == NULL) {
+        Status = EFI_OUT_OF_RESOURCES;
+        goto Error1;
+      }
 
-    HostName   = NULL;
-    Status     = HttpUrlGetHostName (Url, UrlParser, &HostName);
-    if (EFI_ERROR (Status)) {
-     goto Error1;
-    }
+      CopyMem (HostName, HttpInstance->Proxy.HostName, HostNameSize);
+      RemotePort = HttpInstance->Proxy.RemotePort;
+    } else {
+      UrlParser = NULL;
+      Status = HttpParseUrl (Url, (UINT32) AsciiStrLen (Url), FALSE, &UrlParser);
+      if (EFI_ERROR (Status)) {
+        goto Error1;
+      }
 
-    Status = HttpUrlGetPort (Url, UrlParser, &RemotePort);
-    if (EFI_ERROR (Status)) {
-      if (HttpInstance->UseHttps) {
-        RemotePort = HTTPS_DEFAULT_PORT;
-      } else {
-        RemotePort = HTTP_DEFAULT_PORT;
+      HostName   = NULL;
+      Status     = HttpUrlGetHostName (Url, UrlParser, &HostName);
+      if (EFI_ERROR (Status)) {
+        goto Error1;
+      }
+
+      Status = HttpUrlGetPort (Url, UrlParser, &RemotePort);
+      if (EFI_ERROR (Status)) {
+        if (HttpInstance->UseHttps) {
+          RemotePort = HTTPS_DEFAULT_PORT;
+        } else {
+          RemotePort = HTTP_DEFAULT_PORT;
+        }
       }
     }
+
     //
     // If Configure is TRUE, it indicates the first time to call Request();
     // If ReConfigure is TRUE, it indicates the request URL is not same
@@ -492,6 +535,11 @@ EfiHttpRequest (
     //
     if (!HttpInstance->LocalAddressIsIPv6) {
       Status = NetLibAsciiStrToIp4 (HostName, &HttpInstance->RemoteAddr);
+    } else if (UseProxy) {
+      DEBUG ((EFI_D_INFO, "%a: proxy hostname: %a\n", __FUNCTION__,
+              HttpInstance->Proxy.HostName));
+      Status = NetLibAsciiStrToIp6 (HttpInstance->Proxy.HostName,
+                                    &HttpInstance->RemoteIpv6Addr);
     } else {
       Status = HttpUrlGetIp6 (Url, UrlParser, &HttpInstance->RemoteIpv6Addr);
     }
@@ -516,11 +564,12 @@ EfiHttpRequest (
         goto Error1;
       }
     }
-
     //
     // Save the RemotePort and RemoteHost.
     //
     ASSERT (HttpInstance->RemoteHost == NULL);
+    DEBUG ((EFI_D_INFO, "%a: RemoteHost %a RemotePort %d\n", __FUNCTION__,
+            HostName, RemotePort));
     HttpInstance->RemotePort = RemotePort;
     HttpInstance->RemoteHost = HostName;
     HostName = NULL;
@@ -586,9 +635,11 @@ EfiHttpRequest (
   
   //
   // Create request message.
+  // 
+  // If proxy set, then use absolute URI.
   //
   FileUrl = Url;
-  if (Url != NULL && *FileUrl != '/') {
+  if (!UseProxy && Url != NULL && *FileUrl != '/') {
     //
     // Convert the absolute-URI to the absolute-path
     //

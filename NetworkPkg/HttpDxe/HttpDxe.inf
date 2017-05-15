@@ -41,6 +41,7 @@
   HttpProto.c
   HttpsSupport.h
   HttpsSupport.c
+  ProxySupport.c
 
 [LibraryClasses]
   UefiDriverEntryPoint

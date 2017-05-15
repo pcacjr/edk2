@@ -97,6 +97,30 @@ HttpUrlGetHostName (
   );
 
 /**
+  Get the Scheme from a HTTP URL.
+
+  This function will return the Scheme according to the Url and previous parse result ,and
+  it is the caller's responsibility to free the buffer returned in *Scheme.
+
+  @param[in]    Url                The pointer to a HTTP URL string.
+  @param[in]    UrlParser          URL Parse result returned by NetHttpParseUrl().
+  @param[out]   Scheme             Pointer to a buffer to store the Scheme.
+
+  @retval EFI_SUCCESS              Successfully get the required component.
+  @retval EFI_INVALID_PARAMETER    Uri is NULL or HostName is NULL or UrlParser is invalid.
+  @retval EFI_NOT_FOUND            No scheme component in the URL.
+  @retval EFI_OUT_OF_RESOURCES     Could not allocate needed resources.
+
+**/
+EFI_STATUS
+EFIAPI
+HttpUrlGetScheme (
+  IN      CHAR8              *Url,
+  IN      VOID               *UrlParser,
+     OUT  CHAR8              **Scheme
+  );
+
+/**
   Get the IPv4 address from a HTTP URL.
 
   This function will return the IPv4 address according to the Url and previous parse result.

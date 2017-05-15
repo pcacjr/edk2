@@ -180,6 +180,11 @@ typedef struct {
     ///
     EFI_HTTPv6_ACCESS_POINT          *IPv6Node;
   } AccessPoint;
+  //
+  // Define the HTTP proxy server as [scheme]://[host]:[port]. It defaults to
+  // HTTP if scheme is not specified.
+  //
+  CHAR16                             *ProxyUrl;
 } EFI_HTTP_CONFIG_DATA;
 
 ///
