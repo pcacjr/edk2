@@ -100,6 +100,7 @@ UdfOpenVolume (
     &PrivFsData->Volume,
     &PrivFsData->Root
     );
+  ASSERT_EFI_ERROR (Status);
   if (EFI_ERROR (Status)) {
     goto Error_Find_Root_Dir;
   }
@@ -131,7 +132,6 @@ Error_Alloc_Priv_File_Data:
   CleanupFileInformation (&PrivFsData->Root);
 
 Error_Find_Root_Dir:
-  CleanupVolumeInformation (&PrivFsData->Volume);
 
 Error_Read_Udf_Volume:
 Error_Invalid_Params:
@@ -528,7 +528,6 @@ UdfClose (
   EFI_TPL                     OldTpl;
   EFI_STATUS                  Status;
   PRIVATE_UDF_FILE_DATA       *PrivFileData;
-  PRIVATE_UDF_SIMPLE_FS_DATA  *PrivFsData;
 
   OldTpl = gBS->RaiseTPL (TPL_CALLBACK);
 
@@ -541,18 +540,12 @@ UdfClose (
 
   PrivFileData = PRIVATE_UDF_FILE_DATA_FROM_THIS (This);
 
-  PrivFsData = PRIVATE_UDF_SIMPLE_FS_DATA_FROM_THIS (PrivFileData->SimpleFs);
-
   if (!PrivFileData->IsRootDirectory) {
     CleanupFileInformation (&PrivFileData->File);
 
     if (PrivFileData->ReadDirInfo.DirectoryData != NULL) {
       FreePool (PrivFileData->ReadDirInfo.DirectoryData);
     }
-  }
-
-  if (--PrivFsData->OpenFiles == 0) {
-    CleanupVolumeInformation (&PrivFsData->Volume);
   }
 
   FreePool ((VOID *)PrivFileData);
@@ -787,7 +780,7 @@ UdfGetInfo (
   } else if (CompareGuid (InformationType, &gEfiFileSystemInfoGuid)) {
     String = VolumeLabel;
 
-    FileSetDesc = PrivFsData->Volume.FileSetDescs[0];
+    FileSetDesc = &PrivFsData->Volume.FileSetDesc;
 
     OstaCompressed = &FileSetDesc->LogicalVolumeIdentifier[0];
 
@@ -846,7 +839,7 @@ UdfGetInfo (
     FileSystemInfo->Size        = FileSystemInfoLength;
     FileSystemInfo->ReadOnly    = TRUE;
     FileSystemInfo->BlockSize   =
-      LV_BLOCK_SIZE (&PrivFsData->Volume, UDF_DEFAULT_LV_NUM);
+      PrivFsData->Volume.LogicalVolDesc.LogicalBlockSize;
     FileSystemInfo->VolumeSize  = VolumeSize;
     FileSystemInfo->FreeSpace   = FreeSpaceSize;
 
