@@ -84,24 +84,8 @@ FindAnchorVolumeDescriptorPointer (
   return EFI_VOLUME_CORRUPTED;
 }
 
-/**
-  Check if block device supports a valid UDF file system as specified by OSTA
-  Universal Disk Format Specification 2.60.
-
-  @param[in]   BlockIo  BlockIo interface.
-  @param[in]   DiskIo   DiskIo interface.
-
-  @retval EFI_SUCCESS          UDF file system found.
-  @retval EFI_UNSUPPORTED      UDF file system not found.
-  @retval EFI_NO_MEDIA         The device has no media.
-  @retval EFI_DEVICE_ERROR     The device reported an error.
-  @retval EFI_VOLUME_CORRUPTED The file system structures are corrupted.
-  @retval EFI_OUT_OF_RESOURCES The scan was not successful due to lack of
-                               resources.
-
-**/
 EFI_STATUS
-SupportUdfFileSystem (
+FindUdfVolumeIdentifiers (
   IN EFI_BLOCK_IO_PROTOCOL  *BlockIo,
   IN EFI_DISK_IO_PROTOCOL   *DiskIo
   )
@@ -111,7 +95,6 @@ SupportUdfFileSystem (
   UINT64                                EndDiskOffset;
   CDROM_VOLUME_DESCRIPTOR               VolDescriptor;
   CDROM_VOLUME_DESCRIPTOR               TerminatingVolDescriptor;
-  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  AnchorPoint;
 
   ZeroMem ((VOID *)&TerminatingVolDescriptor, sizeof (CDROM_VOLUME_DESCRIPTOR));
 
@@ -207,12 +190,302 @@ SupportUdfFileSystem (
     return EFI_UNSUPPORTED;
   }
 
-  Status = FindAnchorVolumeDescriptorPointer (BlockIo, DiskIo, &AnchorPoint);
-  if (EFI_ERROR (Status)) {
-    return EFI_UNSUPPORTED;
+  return EFI_SUCCESS;
+}
+
+EFI_STATUS
+GetPartitionNumber (
+  IN   UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc,
+  OUT  UINT16                         *PartitionNum
+  )
+{
+  EFI_STATUS                      Status;
+  UDF_LONG_ALLOCATION_DESCRIPTOR  *LongAd;
+
+  Status = EFI_SUCCESS;
+
+  switch (LV_UDF_REVISION (LogicalVolDesc)) {
+  case 0x0102:
+    //
+    // UDF 1.20 only supports Type 1 Partition
+    //
+    *PartitionNum = *(UINT16 *)((UINTN)&LogicalVolDesc->PartitionMaps[4]);
+    break;
+  case 0x0150:
+    //
+    // Ensure Type 1 Partition map
+    //
+    ASSERT (LogicalVolDesc->PartitionMaps[0] == 1 &&
+            LogicalVolDesc->PartitionMaps[1] == 6);
+    *PartitionNum = *(UINT16 *)((UINTN)&LogicalVolDesc->PartitionMaps[4]);
+    break;
+  case 0x0260:
+    LongAd = &LogicalVolDesc->LogicalVolumeContentsUse;
+    *PartitionNum = LongAd->ExtentLocation.PartitionReferenceNumber;
+    break;
+  default:
+    //
+    // Unhandled UDF revision
+    //
+    Status = EFI_VOLUME_CORRUPTED;
+    break;
   }
 
-  return EFI_SUCCESS;
+  return Status;
+}
+
+EFI_STATUS
+FindLogicalVolumeLocation (
+  IN   EFI_BLOCK_IO_PROTOCOL                 *BlockIo,
+  IN   EFI_DISK_IO_PROTOCOL                  *DiskIo,
+  IN   UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  *AnchorPoint,
+  OUT  UINT64                                *MainVdsStartLsn,
+  OUT  UINT64                                *LogicalVolEndLsn
+  )
+{
+  EFI_STATUS                     Status;
+  UINT32                         BlockSize;
+  EFI_LBA                        LastBlock;
+  UDF_EXTENT_AD                  *ExtentAd;
+  UINT64                         StartingLsn;
+  UINT64                         EndingLsn;
+  VOID                           *Buffer;
+  UDF_LOGICAL_VOLUME_DESCRIPTOR  *LogicalVolDesc;
+  UDF_PARTITION_DESCRIPTOR       *PartitionDesc;
+  UINT64                         GuardMainVdsStartLsn;
+  UINT16                         PartitionNum;
+
+  BlockSize             = BlockIo->Media->BlockSize;
+  LastBlock             = BlockIo->Media->LastBlock;
+  ExtentAd              = &AnchorPoint->MainVolumeDescriptorSequenceExtent;
+  StartingLsn           = (UINT64)ExtentAd->ExtentLocation;
+  EndingLsn             =
+    StartingLsn + DivU64x32 ((UINT64)ExtentAd->ExtentLength, BlockSize);
+
+  LogicalVolDesc        = NULL;
+  PartitionDesc         = NULL;
+  GuardMainVdsStartLsn  = StartingLsn;
+
+  //
+  // Allocate buffer for reading disk blocks
+  //
+  Buffer = AllocateZeroPool (BlockSize);
+  if (Buffer == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
+
+  Status = EFI_VOLUME_CORRUPTED;
+
+  //
+  // As per UDF 2.60 specification:
+  //
+  // There shall be exactly one prevailing Logical Volume Descriptor
+  // recorded per Volume Set.
+  //
+  // Start Main Volume Descriptor Sequence and find Logical Volume Descriptor
+  //
+  while (StartingLsn <= EndingLsn) {
+    //
+    // Read disk block
+    //
+    Status = DiskIo->ReadDisk (
+      DiskIo,
+      BlockIo->Media->MediaId,
+      MultU64x32 (StartingLsn, BlockSize),
+      BlockSize,
+      Buffer
+      );
+    if (EFI_ERROR (Status)) {
+      goto Out_Free;
+    }
+
+    //
+    // Check if read block is a Terminating Descriptor
+    //
+    if (IS_TD (Buffer)) {
+      //
+      // Stop Main Volume Descriptor Sequence
+      //
+      break;
+    }
+
+    //
+    // Check if read block is a Logical Volume Descriptor
+    //
+    if (IS_LVD (Buffer)) {
+      //
+      // Ensure only one LVD (Logical Volume Descriptor) is handled
+      //
+      if (LogicalVolDesc != NULL) {
+        Status = EFI_UNSUPPORTED;
+        goto Out_Free;
+      }
+
+      //
+      // As per UDF 2.60 specification:
+      //
+      // For the purpose of interchange, Partition Maps shall be limited to
+      // Partition Map type 1, except type 2 maps.
+      //
+      // NOTE: Type 1 Partitions are the only supported in this implementation.
+      //
+      LogicalVolDesc = AllocateZeroPool (sizeof (*LogicalVolDesc));
+      if (LogicalVolDesc == NULL) {
+        Status = EFI_OUT_OF_RESOURCES;
+        goto Out_Free;
+      }
+
+      //
+      // Save Logical Volume Descriptor
+      //
+      CopyMem (LogicalVolDesc, Buffer, sizeof (*LogicalVolDesc));
+    } else if (IS_PD (Buffer)) {
+      //
+      // Ensure only one PD (Partition Descriptor) is handled
+      //
+      if (PartitionDesc != NULL) {
+        Status = EFI_UNSUPPORTED;
+        goto Out_Free;
+      }
+
+      //
+      // Found a Partition Descriptor.
+      //
+      // As per UDF 2.60 specification:
+      //
+      // A Partition Descriptor Access Type of read-only, rewritable,
+      // overwritable, write-once and pseudo-overwritable shall be
+      // supported. There shall be exactly one prevailing Partition
+      // Descriptor recorded per volume, with one exception. For Volume
+      // Sets that consist of single volume, the volume may contain 2 non-
+      // overlapping Partitions with 2 prevailing Partition Descriptors only
+      // if one has an Access Type of read-only and the other has an
+      // Access Type of rewritable, overwritable, or write-once. The
+      // Logical Volume for this volume would consist of the contents of
+      // both partitions.
+      //
+      PartitionDesc = AllocateZeroPool (sizeof (*PartitionDesc));
+      if (PartitionDesc == NULL) {
+        Status = EFI_OUT_OF_RESOURCES;
+        goto Out_Free;
+      }
+
+      //
+      // Save Partition Descriptor
+      //
+      CopyMem (PartitionDesc, Buffer, sizeof (*PartitionDesc));
+    }
+    //
+    // Go to next disk block
+    //
+    StartingLsn++;
+  }
+
+  Status = EFI_VOLUME_CORRUPTED;
+
+  //
+  // Check if LVD and PD were found
+  //
+  if (LogicalVolDesc != NULL && PartitionDesc != NULL) {
+    //
+    // Get partition number from Partition map in LVD descriptor
+    //
+    Status = GetPartitionNumber (LogicalVolDesc, &PartitionNum);
+    if (EFI_ERROR (Status)) {
+      goto Out_Free;
+    }
+
+    //
+    // Make sure we're handling expected Partition Descriptor
+    //
+    if (PartitionDesc->PartitionNumber != PartitionNum) {
+      Status = EFI_VOLUME_CORRUPTED;
+      goto Out_Free;
+    }
+
+    //
+    // Cover the main VDS area so UdfDxe driver will also be able to get LVD and
+    // PD descriptors out from the file system.
+    //
+    *MainVdsStartLsn = GuardMainVdsStartLsn;
+    *LogicalVolEndLsn = *MainVdsStartLsn + (UINT64)ExtentAd->ExtentLength;
+
+    //
+    // Cover UDF partition area
+    //
+    *LogicalVolEndLsn +=
+      ((UINT64)PartitionDesc->PartitionStartingLocation -
+       *LogicalVolEndLsn) + PartitionDesc->PartitionLength - 1;
+    //
+    // Ensure to not attempt reading past end of device
+    //
+    if (*LogicalVolEndLsn > LastBlock) {
+      Status = EFI_VOLUME_CORRUPTED;
+    } else {
+      Status = EFI_SUCCESS;
+    }
+  }
+
+Out_Free:
+  //
+  // Free block read buffer
+  //
+  FreePool (Buffer);
+  //
+  // Free Logical Volume Descriptor
+  //
+  if (LogicalVolDesc != NULL) {
+    FreePool (LogicalVolDesc);
+  }
+  //
+  // Free Partition Descriptor
+  //
+  if (PartitionDesc != NULL) {
+    FreePool (PartitionDesc);
+  }
+
+  return Status;
+}
+
+EFI_STATUS
+FindUdfLogicalVolume (
+  IN EFI_BLOCK_IO_PROTOCOL  *BlockIo,
+  IN EFI_DISK_IO_PROTOCOL   *DiskIo,
+  OUT EFI_LBA               *StartingLBA,
+  OUT EFI_LBA               *EndingLBA
+  )
+{
+  EFI_STATUS Status;
+  UDF_ANCHOR_VOLUME_DESCRIPTOR_POINTER  AnchorPoint;
+
+  //
+  // Find UDF volume identifiers
+  //
+  Status = FindUdfVolumeIdentifiers (BlockIo, DiskIo);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  //
+  // Find Anchor Volume Descriptor Pointer
+  //
+  Status = FindAnchorVolumeDescriptorPointer (BlockIo, DiskIo, &AnchorPoint);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  //
+  // Find Logical Volume location
+  //
+  Status = FindLogicalVolumeLocation (
+    BlockIo,
+    DiskIo,
+    &AnchorPoint,
+    (UINT64 *)StartingLBA,
+    (UINT64 *)EndingLBA
+    );
+
+  return Status;
 }
 
 /**
@@ -250,6 +523,8 @@ PartitionInstallUdfChildHandles (
   EFI_GUID                     *VendorDefinedGuid;
   EFI_GUID                     UdfDevPathGuid = EFI_UDF_DEVICE_PATH_GUID;
   EFI_PARTITION_INFO_PROTOCOL  PartitionInfo;
+  EFI_LBA                      StartingLBA;
+  EFI_LBA                      EndingLBA;
 
   Media = BlockIo->Media;
 
@@ -291,9 +566,9 @@ PartitionInstallUdfChildHandles (
   }
 
   //
-  // Check if block device supports an UDF file system
+  // Find UDF logical volume on block device
   //
-  Status = SupportUdfFileSystem (BlockIo, DiskIo);
+  Status = FindUdfLogicalVolume (BlockIo, DiskIo, &StartingLBA, &EndingLBA);
   if (EFI_ERROR (Status)) {
     return EFI_NOT_FOUND;
   }
@@ -318,8 +593,8 @@ PartitionInstallUdfChildHandles (
     DevicePath,
     (EFI_DEVICE_PATH_PROTOCOL *)&gUdfDevicePath,
     &PartitionInfo,
-    0,
-    Media->LastBlock,
+    StartingLBA,
+    EndingLBA,
     Media->BlockSize
     );
   if (!EFI_ERROR (Status)) {
