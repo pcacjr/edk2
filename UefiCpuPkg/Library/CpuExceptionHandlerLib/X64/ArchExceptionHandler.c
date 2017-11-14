@@ -14,6 +14,11 @@
 
 #include "CpuExceptionCommon.h"
 
+//
+// Unknown PDB file name
+//
+GLOBAL_REMOVE_IF_UNREFERENCED CONST CHAR8 *mUnknownPdbFileName = "????";
+
 /**
   Return address map of exception handler template so that C code can generate
   exception tables.
@@ -243,6 +248,325 @@ DumpCpuContext (
 }
 
 /**
+  Dump stack contents.
+
+  @param[in]  ImageBase            Base address of PE/COFF image.
+  @param[out] PdbAbsoluteFilePath  Absolute path of PDB file.
+  @param[out] PdbFileName          File name of PDB file.
+**/
+STATIC
+VOID
+GetPdbFileName (
+  IN  UINTN    ImageBase,
+  OUT CHAR8    **PdbAbsoluteFilePath,
+  OUT CHAR8    **PdbFileName
+  )
+{
+  VOID   *PdbPointer;
+  CHAR8  *Str;
+
+  //
+  // Get PDB file name from PE/COFF image
+  //
+  PdbPointer = PeCoffLoaderGetPdbPointer ((VOID *)ImageBase);
+  if (PdbPointer == NULL) {
+    //
+    // No PDB file name found. Set it to an unknown file name.
+    //
+    *PdbFileName = (CHAR8 *)mUnknownPdbFileName;
+    if (PdbAbsoluteFilePath != NULL) {
+      *PdbAbsoluteFilePath = NULL;
+    }
+  } else {
+    //
+    // Get file name portion out of PDB file in PE/COFF image
+    //
+    Str = (CHAR8 *)((UINTN)PdbPointer +
+                    AsciiStrLen ((CHAR8 *)PdbPointer) - sizeof *Str);
+    for (; *Str != '/' && *Str != '\\'; Str--) {
+      ;
+    }
+
+    //
+    // Set PDB file name (also skip trailing path separator: '/' or '\\')
+    //
+    *PdbFileName = Str + 1;
+
+    if (PdbAbsoluteFilePath != NULL) {
+      //
+      // Set absolute file path of PDB file
+      //
+      *PdbAbsoluteFilePath = PdbPointer;
+    }
+  }
+}
+
+/**
+  Dump stack contents.
+
+  @param[in]  CurrentRsp         Current stack pointer address.
+  @param[in]  UnwondStacksCount  Count of unwond stack frames.
+**/
+STATIC
+VOID
+DumpStackContents (
+  IN UINT64  CurrentRsp,
+  IN INTN    UnwondStacksCount
+  )
+{
+  if (UnwondStacksCount == 0) {
+    return;
+  }
+
+  //
+  // Dump out stack contents
+  //
+  InternalPrintMessage ("\nStack dump:\n");
+  while (UnwondStacksCount-- > 0) {
+    InternalPrintMessage (
+      "0x%016lx: %016lx %016lx\n",
+      CurrentRsp,
+      *(UINT64 *)CurrentRsp,
+      *(UINT64 *)((UINTN)CurrentRsp + 8)
+      );
+
+    //
+    // As per Microsoft x64 ABI, the stack pointer must be aligned on a 16 byte
+    // boundary.
+    //
+    CurrentRsp = CurrentRsp + 16;
+  }
+}
+
+/**
+  Dump all image module names from call stack.
+
+  @param[in]  SystemContext  Pointer to EFI_SYSTEM_CONTEXT.
+**/
+STATIC
+VOID
+DumpImageModuleNames (
+  IN EFI_SYSTEM_CONTEXT   SystemContext
+  )
+{
+  EFI_STATUS  Status;
+  UINT64      Rip;
+  UINTN       ImageBase;
+  VOID        *EntryPoint;
+  CHAR8       *PdbAbsoluteFilePath;
+  CHAR8       *PdbFileName;
+  UINT64      Rbp;
+
+  //
+  // Set current RIP address
+  //
+  Rip = SystemContext.SystemContextX64->Rip;
+
+  //
+  // Set current frame pointer address
+  //
+  Rbp = SystemContext.SystemContextX64->Rbp;
+
+  //
+  // Get initial PE/COFF image base address from current RIP
+  //
+  ImageBase = PeCoffSearchImageBase (Rip);
+  if (ImageBase == 0) {
+    InternalPrintMessage ("!!!! Could not find image module names. !!!!");
+    return;
+  }
+
+  //
+  // Get initial PE/COFF image's entry point
+  //
+  Status = PeCoffLoaderGetEntryPoint ((VOID *)ImageBase, &EntryPoint);
+  if (EFI_ERROR (Status)) {
+    EntryPoint = NULL;
+  }
+
+  //
+  // Get file name and absolute path of initial PDB file
+  //
+  GetPdbFileName (ImageBase, &PdbAbsoluteFilePath, &PdbFileName);
+
+  //
+  // Print out initial image module name (if any)
+  //
+  if (PdbAbsoluteFilePath != NULL) {
+    InternalPrintMessage (
+      "\n%a (ImageBase=0x%016lx, EntryPoint=0x%016lx):\n",
+      PdbFileName,
+      ImageBase,
+      (UINTN)EntryPoint
+      );
+    InternalPrintMessage ("%a\n", PdbAbsoluteFilePath);
+  }
+
+  //
+  // Walk through call stack and find next module names
+  //
+  for (;;) {
+    //
+    // Set RIP with return address from current stack frame
+    //
+    Rip = *(UINT64 *)((UINTN)Rbp + 8);
+
+    //
+    // Check if RIP is within another PE/COFF image base address
+    //
+    if (Rip < ImageBase) {
+      //
+      // Search for the respective PE/COFF image based on RIP
+      //
+      ImageBase = PeCoffSearchImageBase (Rip);
+      if (ImageBase == 0) {
+        //
+        // Stop stack trace
+        //
+        break;
+      }
+
+      //
+      // Get PE/COFF image's entry point
+      //
+      Status = PeCoffLoaderGetEntryPoint ((VOID *)ImageBase, &EntryPoint);
+      if (EFI_ERROR (Status)) {
+        EntryPoint = NULL;
+      }
+
+      //
+      // Get file name and absolute path of PDB file
+      //
+      GetPdbFileName (ImageBase, &PdbAbsoluteFilePath, &PdbFileName);
+
+      //
+      // Print out image module name (if any)
+      //
+      if (PdbAbsoluteFilePath != NULL) {
+        InternalPrintMessage (
+          "%a (ImageBase=0x%016lx, EntryPoint=0x%016lx):\n",
+          PdbFileName,
+          ImageBase,
+          (UINTN)EntryPoint
+          );
+        InternalPrintMessage ("%a\n", PdbAbsoluteFilePath);
+      }
+    }
+
+    //
+    // Unwind the stack
+    //
+    Rbp = *(UINT64 *)(UINTN)Rbp;
+  }
+}
+
+/**
+  Dump stack trace.
+
+  @param[in]  SystemContext      Pointer to EFI_SYSTEM_CONTEXT.
+  @param[out] UnwondStacksCount  Count of unwond stack frames.
+**/
+STATIC
+VOID
+DumpStackTrace (
+  IN  EFI_SYSTEM_CONTEXT   SystemContext,
+  OUT INTN                 *UnwondStacksCount
+  )
+{
+  UINT64  Rip;
+  UINT64  Rbp;
+  UINTN   ImageBase;
+  CHAR8   *PdbFileName;
+
+  //
+  // Initialize count of unwond stacks
+  //
+  *UnwondStacksCount = 0;
+
+  //
+  // Set current RIP address
+  //
+  Rip = SystemContext.SystemContextX64->Rip;
+
+  //
+  // Set current frame pointer address
+  //
+  Rbp = SystemContext.SystemContextX64->Rbp;
+
+  //
+  // Get initial PE/COFF image base address from current RIP
+  //
+  ImageBase = PeCoffSearchImageBase (Rip);
+  if (ImageBase == 0) {
+    InternalPrintMessage ("!!!! Could not find backtrace information. !!!!");
+    return;
+  }
+
+  //
+  // Get PDB file name from initial PE/COFF image
+  //
+  GetPdbFileName (ImageBase, NULL, &PdbFileName);
+
+  //
+  // Print out back trace
+  //
+  InternalPrintMessage ("\nBack trace:\n");
+
+  for (;;) {
+    //
+    // Print stack frame in the following format:
+    //
+    // # <RIP> @ <ImageBase>+<RelOffset> (RBP) in [<ModuleName> | ????]
+    //
+    InternalPrintMessage (
+      "%d 0x%016lx @ 0x%016lx+0x%x (0x%016lx) in %a\n",
+      *UnwondStacksCount,
+      Rip,
+      ImageBase,
+      Rip - ImageBase - 1,
+      Rbp,
+      PdbFileName
+      );
+
+    //
+    // Set RIP with return address from current stack frame
+    //
+    Rip = *(UINT64 *)((UINTN)Rbp + 8);
+
+    //
+    // Check if RIP is within another PE/COFF image base address
+    //
+    if (Rip < ImageBase) {
+      //
+      // Search for the respective PE/COFF image based on RIP
+      //
+      ImageBase = PeCoffSearchImageBase (Rip);
+      if (ImageBase == 0) {
+        //
+        // Stop stack trace
+        //
+        break;
+      }
+
+      //
+      // Get PDB file name
+      //
+      GetPdbFileName (ImageBase, NULL, &PdbFileName);
+    }
+
+    //
+    // Unwind the stack
+    //
+    Rbp = *(UINT64 *)(UINTN)Rbp;
+
+    //
+    // Increment count of unwond stacks
+    //
+    (*UnwondStacksCount)++;
+  }
+}
+
+/**
   Display CPU information.
 
   @param ExceptionType  Exception type.
@@ -254,9 +578,25 @@ DumpImageAndCpuContent (
   IN EFI_SYSTEM_CONTEXT   SystemContext
   )
 {
+  INTN UnwondStacksCount;
+
+  //
+  // Dump CPU context
+  //
   DumpCpuContext (ExceptionType, SystemContext);
+
   //
-  // Dump module image base and module entry point by RIP
+  // Dump stack trace
   //
-  DumpModuleImageInfo (SystemContext.SystemContextX64->Rip);
+  DumpStackTrace (SystemContext, &UnwondStacksCount);
+
+  //
+  // Dump image module names
+  //
+  DumpImageModuleNames (SystemContext);
+
+  //
+  // Dump stack contents
+  //
+  DumpStackContents (SystemContext.SystemContextX64->Rsp, UnwondStacksCount);
 }
