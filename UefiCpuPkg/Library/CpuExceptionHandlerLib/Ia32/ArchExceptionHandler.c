@@ -211,6 +211,289 @@ DumpCpuContext (
 }
 
 /**
+  Dump stack trace.
+
+  @param[in]  SystemContext      Pointer to EFI_SYSTEM_CONTEXT.
+  @param[out] UnwondStacksCount  Count of unwond stack frames.
+**/
+STATIC
+VOID
+DumpStackTrace (
+  IN  EFI_SYSTEM_CONTEXT   SystemContext,
+  OUT INTN                 *UnwondStacksCount
+  )
+{
+  UINT32  Eip;
+  UINT32  Ebp;
+  UINTN   ImageBase;
+  CHAR8   *PdbFileName;
+
+  //
+  // Set current EIP address
+  //
+  Eip = SystemContext.SystemContextIa32->Eip;
+
+  //
+  // Set current frame pointer address
+  //
+  Ebp = SystemContext.SystemContextIa32->Ebp;
+
+  //
+  // Check for proper frame pointer alignment
+  //
+  if (((UINTN)Ebp & (CPU_STACK_ALIGNMENT - 1)) != 0) {
+    InternalPrintMessage ("!!!! Unaligned frame pointer. !!!!\n");
+    return;
+  }
+
+  //
+  // Get initial PE/COFF image base address from current EIP
+  //
+  ImageBase = PeCoffSearchImageBase (Eip);
+  if (ImageBase == 0) {
+    InternalPrintMessage ("!!!! Could not find backtrace information. !!!!");
+    return;
+  }
+
+  //
+  // Get PDB file name from initial PE/COFF image
+  //
+  GetPdbFileName (ImageBase, NULL, &PdbFileName);
+
+  //
+  // Initialize count of unwond stacks
+  //
+  *UnwondStacksCount = 1;
+
+  //
+  // Print out back trace
+  //
+  InternalPrintMessage ("\nCall trace:\n");
+
+  for (;;) {
+    //
+    // Print stack frame in the following format:
+    //
+    // # <EIP> @ <ImageBase>+<RelOffset> (EBP) in [<ModuleName> | ????]
+    //
+    InternalPrintMessage (
+      "%d 0x%08x @ 0x%08x+0x%x (0x%08x) in %a\n",
+      *UnwondStacksCount - 1,
+      Eip,
+      ImageBase,
+      Eip - ImageBase - 1,
+      Ebp,
+      PdbFileName
+      );
+
+    //
+    // Set EIP with return address from current stack frame
+    //
+    Eip = *(UINT32 *)((UINTN)Ebp + 4);
+
+    //
+    // If EIP is zero, then stop unwinding the stack
+    //
+    if (Eip == 0) {
+      break;
+    }
+
+    //
+    // Check if EIP is within another PE/COFF image base address
+    //
+    if (Eip < ImageBase) {
+      //
+      // Search for the respective PE/COFF image based on EIP
+      //
+      ImageBase = PeCoffSearchImageBase (Eip);
+      if (ImageBase == 0) {
+        //
+        // Stop stack trace
+        //
+        break;
+      }
+
+      //
+      // Get PDB file name
+      //
+      GetPdbFileName (ImageBase, NULL, &PdbFileName);
+    }
+
+    //
+    // Unwind the stack
+    //
+    Ebp = *(UINT32 *)(UINTN)Ebp;
+
+    //
+    // Increment count of unwond stacks
+    //
+    (*UnwondStacksCount)++;
+  }
+}
+
+/**
+  Dump all image module names from call stack.
+
+  @param[in]  SystemContext  Pointer to EFI_SYSTEM_CONTEXT.
+**/
+STATIC
+VOID
+DumpImageModuleNames (
+  IN EFI_SYSTEM_CONTEXT   SystemContext
+  )
+{
+  EFI_STATUS  Status;
+  UINT32      Eip;
+  UINT32      Ebp;
+  UINTN       ImageBase;
+  VOID        *EntryPoint;
+  CHAR8       *PdbAbsoluteFilePath;
+  CHAR8       *PdbFileName;
+
+  //
+  // Set current EIP address
+  //
+  Eip = SystemContext.SystemContextIa32->Eip;
+
+  //
+  // Set current frame pointer address
+  //
+  Ebp = SystemContext.SystemContextIa32->Ebp;
+
+  //
+  // Get initial PE/COFF image base address from current EIP
+  //
+  ImageBase = PeCoffSearchImageBase (Eip);
+  if (ImageBase == 0) {
+    InternalPrintMessage ("!!!! Could not find image module names. !!!!");
+    return;
+  }
+
+  //
+  // Get initial PE/COFF image's entry point
+  //
+  Status = PeCoffLoaderGetEntryPoint ((VOID *)ImageBase, &EntryPoint);
+  if (EFI_ERROR (Status)) {
+    EntryPoint = NULL;
+  }
+
+  //
+  // Get file name and absolute path of initial PDB file
+  //
+  GetPdbFileName (ImageBase, &PdbAbsoluteFilePath, &PdbFileName);
+
+  //
+  // Print out initial image module name (if any)
+  //
+  if (PdbAbsoluteFilePath != NULL) {
+    InternalPrintMessage (
+      "\n%a (ImageBase=0x%08x, EntryPoint=0x%08x):\n",
+      PdbFileName,
+      ImageBase,
+      (UINTN)EntryPoint
+      );
+    InternalPrintMessage ("%a\n", PdbAbsoluteFilePath);
+  }
+
+  //
+  // Walk through call stack and find next module names
+  //
+  for (;;) {
+    //
+    // Set EIP with return address from current stack frame
+    //
+    Eip = *(UINT32 *)((UINTN)Ebp + 4);
+
+    //
+    // Check if EIP is within another PE/COFF image base address
+    //
+    if (Eip < ImageBase) {
+      //
+      // Search for the respective PE/COFF image based on Eip
+      //
+      ImageBase = PeCoffSearchImageBase (Eip);
+      if (ImageBase == 0) {
+        //
+        // Stop stack trace
+        //
+        break;
+      }
+
+      //
+      // Get PE/COFF image's entry point
+      //
+      Status = PeCoffLoaderGetEntryPoint ((VOID *)ImageBase, &EntryPoint);
+      if (EFI_ERROR (Status)) {
+        EntryPoint = NULL;
+      }
+
+      //
+      // Get file name and absolute path of PDB file
+      //
+      GetPdbFileName (ImageBase, &PdbAbsoluteFilePath, &PdbFileName);
+
+      //
+      // Print out image module name (if any)
+      //
+      if (PdbAbsoluteFilePath != NULL) {
+        InternalPrintMessage (
+          "%a (ImageBase=0x%08x, EntryPoint=0x%08x):\n",
+          PdbFileName,
+          ImageBase,
+          (UINTN)EntryPoint
+          );
+        InternalPrintMessage ("%a\n", PdbAbsoluteFilePath);
+      }
+    }
+
+    //
+    // Unwind the stack
+    //
+    Ebp = *(UINT32 *)(UINTN)Ebp;
+  }
+}
+
+/**
+  Dump stack contents.
+
+  @param[in]  CurrentEsp         Current stack pointer address.
+  @param[in]  UnwondStacksCount  Count of unwond stack frames.
+**/
+STATIC
+VOID
+DumpStackContents (
+  IN UINT32  CurrentEsp,
+  IN INTN    UnwondStacksCount
+  )
+{
+  //
+  // Check for proper stack alignment
+  //
+  if (((UINTN)CurrentEsp & (CPU_STACK_ALIGNMENT - 1)) != 0) {
+    InternalPrintMessage ("!!!! Unaligned stack pointer. !!!!\n");
+    return;
+  }
+
+  //
+  // Dump out stack contents
+  //
+  InternalPrintMessage ("\nStack dump:\n");
+  while (UnwondStacksCount-- > 0) {
+    InternalPrintMessage (
+      "0x%08x: %08x %08x\n",
+      CurrentEsp,
+      *(UINT32 *)CurrentEsp,
+      *(UINT32 *)((UINTN)CurrentEsp + 4)
+      );
+
+    //
+    // Point to next stack
+    //
+    CurrentEsp += CPU_STACK_ALIGNMENT;
+  }
+}
+
+/**
   Display CPU information.
 
   @param ExceptionType  Exception type.
@@ -222,9 +505,25 @@ DumpImageAndCpuContent (
   IN EFI_SYSTEM_CONTEXT   SystemContext
   )
 {
+  INTN UnwondStacksCount;
+
+  //
+  // Dump CPU context
+  //
   DumpCpuContext (ExceptionType, SystemContext);
+
   //
-  // Dump module image base and module entry point by EIP
+  // Dump stack trace
   //
-  DumpModuleImageInfo (SystemContext.SystemContextIa32->Eip);
+  DumpStackTrace (SystemContext, &UnwondStacksCount);
+
+  //
+  // Dump image module names
+  //
+  DumpImageModuleNames (SystemContext);
+
+  //
+  // Dump stack contents
+  //
+  DumpStackContents (SystemContext.SystemContextIa32->Esp, UnwondStacksCount);
 }
