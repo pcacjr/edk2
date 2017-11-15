@@ -120,17 +120,6 @@ InternalPrintMessage (
   );
 
 /**
-  Find and display image base address and return image base and its entry point.
-
-  @param CurrentEip      Current instruction pointer.
-
-**/
-VOID
-DumpModuleImageInfo (
-  IN  UINTN              CurrentEip
-  );
-
-/**
   Display CPU information.
 
   @param ExceptionType  Exception type.
