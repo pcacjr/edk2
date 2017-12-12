@@ -54,6 +54,11 @@ CONST CHAR8 *mExceptionNameStr[] = {
 
 #define EXCEPTION_KNOWN_NAME_NUM  (sizeof (mExceptionNameStr) / sizeof (CHAR8 *))
 
+//
+// Unknown PDB file name
+//
+GLOBAL_REMOVE_IF_UNREFERENCED CONST CHAR8 *mUnknownPdbFileName = "????";
+
 /**
   Get ASCII format string exception name by exception type.
 
@@ -177,4 +182,57 @@ ReadAndVerifyVectorInfo (
     VectorInfo ++;
   }
   return EFI_SUCCESS;
+}
+
+/**
+  Get absolute path and file name of PDB file in PE/COFF image.
+
+  @param[in]  ImageBase            Base address of PE/COFF image.
+  @param[out] PdbAbsoluteFilePath  Absolute path of PDB file.
+  @param[out] PdbFileName          File name of PDB file.
+**/
+VOID
+GetPdbFileName (
+  IN  UINTN    ImageBase,
+  OUT CHAR8    **PdbAbsoluteFilePath,
+  OUT CHAR8    **PdbFileName
+  )
+{
+  VOID   *PdbPointer;
+  CHAR8  *Str;
+
+  //
+  // Get PDB file name from PE/COFF image
+  //
+  PdbPointer = PeCoffLoaderGetPdbPointer ((VOID *)ImageBase);
+  if (PdbPointer == NULL) {
+    //
+    // No PDB file name found. Set it to an unknown file name.
+    //
+    *PdbFileName = (CHAR8 *)mUnknownPdbFileName;
+    if (PdbAbsoluteFilePath != NULL) {
+      *PdbAbsoluteFilePath = NULL;
+    }
+  } else {
+    //
+    // Get file name portion out of PDB file in PE/COFF image
+    //
+    Str = (CHAR8 *)((UINTN)PdbPointer +
+                    AsciiStrLen ((CHAR8 *)PdbPointer) - sizeof *Str);
+    for (; *Str != '/' && *Str != '\\'; Str--) {
+      ;
+    }
+
+    //
+    // Set PDB file name (also skip trailing path separator: '/' or '\\')
+    //
+    *PdbFileName = Str + 1;
+
+    if (PdbAbsoluteFilePath != NULL) {
+      //
+      // Set absolute file path of PDB file
+      //
+      *PdbAbsoluteFilePath = PdbPointer;
+    }
+  }
 }
