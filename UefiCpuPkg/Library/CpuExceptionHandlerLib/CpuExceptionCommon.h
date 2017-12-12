@@ -327,5 +327,19 @@ AsmGetTssTemplateMap (
   OUT EXCEPTION_HANDLER_TEMPLATE_MAP  *AddressMap
   );
 
+/**
+  Get absolute path and file name of PDB file in PE/COFF image.
+
+  @param[in]  ImageBase            Base address of PE/COFF image.
+  @param[out] PdbAbsoluteFilePath  Absolute path of PDB file.
+  @param[out] PdbFileName          File name of PDB file.
+**/
+VOID
+GetPdbFileName (
+  IN  UINTN    ImageBase,
+  OUT CHAR8    **PdbAbsoluteFilePath,
+  OUT CHAR8    **PdbFileName
+  );
+
 #endif
 
