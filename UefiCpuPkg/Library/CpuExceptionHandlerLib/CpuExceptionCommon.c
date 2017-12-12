@@ -110,48 +110,6 @@ InternalPrintMessage (
 }
 
 /**
-  Find and display image base address and return image base and its entry point.
-
-  @param CurrentEip      Current instruction pointer.
-
-**/
-VOID
-DumpModuleImageInfo (
-  IN  UINTN              CurrentEip
-  )
-{
-  EFI_STATUS                           Status;
-  UINTN                                Pe32Data;
-  VOID                                 *PdbPointer;
-  VOID                                 *EntryPoint;
-
-  Pe32Data = PeCoffSearchImageBase (CurrentEip);
-  if (Pe32Data == 0) {
-    InternalPrintMessage ("!!!! Can't find image information. !!!!\n");
-  } else {
-    //
-    // Find Image Base entry point
-    //
-    Status = PeCoffLoaderGetEntryPoint ((VOID *) Pe32Data, &EntryPoint);
-    if (EFI_ERROR (Status)) {
-      EntryPoint = NULL;
-    }
-    InternalPrintMessage ("!!!! Find image ");
-    PdbPointer = PeCoffLoaderGetPdbPointer ((VOID *) Pe32Data);
-    if (PdbPointer != NULL) {
-      InternalPrintMessage ("%a", PdbPointer);
-    } else {
-      InternalPrintMessage ("(No PDB) " );
-    }
-    InternalPrintMessage (
-      " (ImageBase=%016lp, EntryPoint=%016p) !!!!\n",
-      (VOID *) Pe32Data,
-      EntryPoint
-      );
-  }
-}
-
-/**
   Read and save reserved vector information
 
   @param[in]  VectorInfo        Pointer to reserved vector list.
