@@ -401,16 +401,26 @@ DumpCpuContext (
 /**
   Dump stack contents.
 
-  @param[in]  CurrentRsp         Current stack pointer address.
+  @param[in]  SystemContext       Pointer to EFI_SYSTEM_CONTEXT.
   @param[in]  UnwoundStacksCount  Count of unwound stack frames.
 **/
 STATIC
 VOID
 DumpStackContents (
-  IN UINT64  CurrentRsp,
-  IN INTN    UnwoundStacksCount
+  IN  EFI_SYSTEM_CONTEXT  SystemContext,
+  IN  INTN                UnwoundStacksCount
   )
 {
+  UINT64  CurrentRsp;
+  UINTN   Cr0;
+  UINTN   Cr3;
+  UINTN   Cr4;
+
+  //
+  // Get current stack pointer
+  //
+  CurrentRsp = SystemContext.SystemContextX64->Rsp;
+
   //
   // Check for proper stack pointer alignment
   //
@@ -420,10 +430,27 @@ DumpStackContents (
   }
 
   //
+  // Get system control registers
+  //
+  Cr0 = SystemContext.SystemContextX64->Cr0;
+  Cr3 = SystemContext.SystemContextX64->Cr3;
+  Cr4 = SystemContext.SystemContextX64->Cr4;
+
+  //
   // Dump out stack contents
   //
   InternalPrintMessage ("\nStack dump:\n");
   while (UnwoundStacksCount-- > 0) {
+    //
+    // Check for a valid stack pointer address
+    //
+    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)CurrentRsp) ||
+        !IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)CurrentRsp + 8)) {
+      InternalPrintMessage ("%a: attempted to dereference an invalid stack "
+                            "pointer at 0x%016lx\n", __FUNCTION__, CurrentRsp);
+      break;
+    }
+
     InternalPrintMessage (
       "0x%016lx: %016lx %016lx\n",
       CurrentRsp,
@@ -459,6 +486,9 @@ DumpImageModuleNames (
   CHAR8       *PdbFileName;
   UINT64      Rbp;
   UINTN       LastImageBase;
+  UINTN       Cr0;
+  UINTN       Cr3;
+  UINTN       Cr4;
 
   //
   // Set current RIP address
@@ -528,9 +558,26 @@ DumpImageModuleNames (
   }
 
   //
+  // Get system control registers
+  //
+  Cr0 = SystemContext.SystemContextX64->Cr0;
+  Cr3 = SystemContext.SystemContextX64->Cr3;
+  Cr4 = SystemContext.SystemContextX64->Cr4;
+
+  //
   // Walk through call stack and find next module names
   //
   for (;;) {
+    //
+    // Check for a valid frame pointer
+    //
+    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp + 8) ||
+        !IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp)) {
+      InternalPrintMessage ("%a: attempted to dereference an invalid frame "
+                            "pointer at 0x%016lx\n", __FUNCTION__, Rbp);
+      break;
+    }
+
     //
     // Set RIP with return address from current stack frame
     //
@@ -617,6 +664,9 @@ DumpStacktrace (
   UINT64  Rbp;
   UINTN   ImageBase;
   CHAR8   *PdbFileName;
+  UINTN   Cr0;
+  UINTN   Cr3;
+  UINTN   Cr4;
 
   //
   // Set current RIP address
@@ -657,11 +707,28 @@ DumpStacktrace (
   *UnwoundStacksCount = 1;
 
   //
+  // Get system control registers
+  //
+  Cr0 = SystemContext.SystemContextX64->Cr0;
+  Cr3 = SystemContext.SystemContextX64->Cr3;
+  Cr4 = SystemContext.SystemContextX64->Cr4;
+
+  //
   // Print out back trace
   //
   InternalPrintMessage ("\nCall trace:\n");
 
   for (;;) {
+    //
+    // Check for valid frame pointer
+    //
+    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp + 8) ||
+        !IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp)) {
+      InternalPrintMessage ("%a: attempted to dereference an invalid frame "
+                            "pointer at 0x%016lx\n", __FUNCTION__, Rbp);
+      break;
+    }
+
     //
     // Print stack frame in the following format:
     //
@@ -749,5 +816,5 @@ DumpImageAndCpuContent (
   //
   // Dump stack contents
   //
-  DumpStackContents (SystemContext.SystemContextX64->Rsp, UnwoundStacksCount);
+  DumpStackContents (SystemContext, UnwoundStacksCount);
 }
