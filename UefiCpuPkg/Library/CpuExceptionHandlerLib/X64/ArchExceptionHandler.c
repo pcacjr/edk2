@@ -717,7 +717,7 @@ DumpStackTrace (
       *UnwoundStacksCount - 1,
       Rip,
       ImageBase,
-      Rip - ImageBase - 1,
+      Rip - ImageBase,
       Rbp,
       PdbFileName
       );
