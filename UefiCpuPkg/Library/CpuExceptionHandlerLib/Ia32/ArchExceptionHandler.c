@@ -399,6 +399,96 @@ DumpCpuContext (
 }
 
 /**
+  Check if a logical address is valid.
+
+  @param[in]  SystemContext      Pointer to EFI_SYSTEM_CONTEXT.
+  @param[in]  SegmentSelector    Segment selector.
+  @param[in]  Offset             Offset or logical address.
+**/
+STATIC
+BOOLEAN
+IsLogicalAddressValid (
+  IN  EFI_SYSTEM_CONTEXT   SystemContext,
+  IN  UINT16               SegmentSelector,
+  IN  UINTN                Offset
+  )
+{
+  IA32_SEGMENT_DESCRIPTOR  *SegmentDescriptor;
+  UINT32                   SegDescBase;
+  UINT32                   SegDescLimit;
+  UINTN                    SegDescLimitInBytes;
+
+  //
+  // Check for valid input parameters
+  //
+  if (SegmentSelector == 0 || Offset == 0) {
+    return FALSE;
+  }
+
+  //
+  // Check whether to look for a segment descriptor in GDT or LDT table
+  //
+  if ((SegmentSelector & BIT2) == 0) {
+    //
+    // Get segment descriptor from GDT table
+    //
+    SegmentDescriptor =
+      (IA32_SEGMENT_DESCRIPTOR *)(
+        (UINTN)SystemContext.SystemContextIa32->Gdtr[0] +
+        ((SegmentSelector >> 3) * 8)
+        );
+  } else {
+    //
+    // Get segment descriptor from LDT table
+    //
+    SegmentDescriptor =
+      (IA32_SEGMENT_DESCRIPTOR *)(
+        (UINTN)SystemContext.SystemContextIa32->Ldtr +
+        ((SegmentSelector >> 3) * 8)
+        );
+  }
+
+  //
+  // Get segment descriptor's base address
+  //
+  SegDescBase = SegmentDescriptor->Bits.BaseLow |
+    (SegmentDescriptor->Bits.BaseMid << 16) |
+    (SegmentDescriptor->Bits.BaseHigh << 24);
+
+  //
+  // Get segment descriptor's limit
+  //
+  SegDescLimit = SegmentDescriptor->Bits.LimitLow |
+    (SegmentDescriptor->Bits.LimitHigh << 16);
+
+  //
+  // Calculate segment descriptor's limit in bytes
+  //
+  if (SegmentDescriptor->Bits.G == 1) {
+    SegDescLimitInBytes = (UINTN)SegDescLimit * SIZE_4KB;
+  } else {
+    SegDescLimitInBytes = SegDescLimit;
+  }
+
+  //
+  // Make sure to not access beyond a segment limit boundary
+  //
+  if (Offset + SegDescBase > SegDescLimitInBytes) {
+    return FALSE;
+  }
+
+  //
+  // Check if the translated logical address (or linear address) is valid
+  //
+  return IsLinearAddressValid (
+    SystemContext.SystemContextIa32->Cr0,
+    SystemContext.SystemContextIa32->Cr3,
+    SystemContext.SystemContextIa32->Cr4,
+    Offset + SegDescBase
+    );
+}
+
+/**
   Dump stack trace.
 
   @param[in]  SystemContext      Pointer to EFI_SYSTEM_CONTEXT.
@@ -459,6 +549,20 @@ DumpStackTrace (
   InternalPrintMessage ("\nCall trace:\n");
 
   for (;;) {
+    //
+    // Check for valid frame pointer
+    //
+    if (!IsLogicalAddressValid (SystemContext,
+                                SystemContext.SystemContextIa32->Ss,
+                                (UINTN)Ebp + 4) ||
+        !IsLogicalAddressValid (SystemContext,
+                                SystemContext.SystemContextIa32->Ss,
+                                (UINTN)Ebp)) {
+      InternalPrintMessage ("%a: attempted to dereference an invalid frame "
+                            "pointer at 0x%08x\n", __FUNCTION__, Ebp);
+      break;
+    }
+
     //
     // Print stack frame in the following format:
     //
@@ -588,6 +692,16 @@ DumpImageModuleNames (
   // Walk through call stack and find next module names
   //
   for (;;) {
+    if (!IsLogicalAddressValid (SystemContext,
+                                SystemContext.SystemContextIa32->Ss,
+                                (UINTN)Ebp) ||
+        !IsLogicalAddressValid (SystemContext,
+                                SystemContext.SystemContextIa32->Ss,
+                                (UINTN)Ebp + 4)) {
+      InternalPrintMessage ("%a: attempted to dereference an invalid frame "
+                            "pointer at 0x%08x\n", __FUNCTION__, Ebp);
+    }
+
     //
     // Set EIP with return address from current stack frame
     //
@@ -651,16 +765,23 @@ DumpImageModuleNames (
 /**
   Dump stack contents.
 
-  @param[in]  CurrentEsp         Current stack pointer address.
+  @param[in]  SystemContext       Pointer to EFI_SYSTEM_CONTEXT.
   @param[in]  UnwoundStacksCount  Count of unwound stack frames.
 **/
 STATIC
 VOID
 DumpStackContents (
-  IN UINT32  CurrentEsp,
-  IN INTN    UnwoundStacksCount
+  IN  EFI_SYSTEM_CONTEXT  SystemContext,
+  IN  INTN                UnwoundStacksCount
   )
 {
+  UINT32 CurrentEsp;
+
+  //
+  // Get current stack pointer
+  //
+  CurrentEsp = SystemContext.SystemContextIa32->Esp;
+
   //
   // Check for proper stack alignment
   //
@@ -674,6 +795,20 @@ DumpStackContents (
   //
   InternalPrintMessage ("\nStack dump:\n");
   while (UnwoundStacksCount-- > 0) {
+    //
+    // Check for a valid stack pointer address
+    //
+    if (!IsLogicalAddressValid (SystemContext,
+                                SystemContext.SystemContextIa32->Ss,
+                                (UINTN)CurrentEsp) ||
+        !IsLogicalAddressValid (SystemContext,
+                                SystemContext.SystemContextIa32->Ss,
+                                (UINTN)CurrentEsp + 4)) {
+      InternalPrintMessage ("%a: attempted to dereference an invalid stack "
+                            "pointer at 0x%08x\n", __FUNCTION__, CurrentEsp);
+      break;
+    }
+
     InternalPrintMessage (
       "0x%08x: %08x %08x\n",
       CurrentEsp,
@@ -720,5 +855,5 @@ DumpImageAndCpuContent (
   //
   // Dump stack contents
   //
-  DumpStackContents (SystemContext.SystemContextIa32->Esp, UnwoundStacksCount);
+  DumpStackContents (SystemContext, UnwoundStacksCount);
 }
