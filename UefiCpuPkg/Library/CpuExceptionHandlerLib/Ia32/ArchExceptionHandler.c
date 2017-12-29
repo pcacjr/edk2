@@ -590,7 +590,7 @@ DumpStacktrace (
       *UnwoundStacksCount - 1,
       Eip,
       ImageBase,
-      Eip - ImageBase - 1,
+      Eip - ImageBase,
       Ebp,
       PdbFileName
       );
