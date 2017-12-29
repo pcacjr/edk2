@@ -330,5 +330,21 @@ GetPdbFileName (
   OUT CHAR8    **PdbFileName
   );
 
+/**
+  Check if a linear address is valid.
+
+  @param[in]  Cr0            CR0 control register.
+  @param[in]  Cr3            CR3 control register.
+  @param[in]  Cr4            CR4 control register.
+  @param[in]  LinearAddress  Linear address to be checked.
+**/
+BOOLEAN
+IsLinearAddressValid (
+  IN  UINTN              Cr0,
+  IN  UINTN              Cr3,
+  IN  UINTN              Cr4,
+  IN  UINTN              LinearAddress
+  );
+
 #endif
 
