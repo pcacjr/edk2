@@ -415,6 +415,8 @@ DumpStackContents (
   UINTN   Cr0;
   UINTN   Cr3;
   UINTN   Cr4;
+  UINTN   RspAddressStart;
+  UINTN   RspAddressEnd;
 
   //
   // Get current stack pointer
@@ -437,20 +439,28 @@ DumpStackContents (
   Cr4 = SystemContext.SystemContextX64->Cr4;
 
   //
+  // Calculate address range of the stack pointers
+  //
+  RspAddressStart = (UINTN)CurrentRsp;
+  RspAddressEnd =
+    RspAddressStart + (UINTN)UnwoundStacksCount * CPU_STACK_ALIGNMENT;
+
+  //
+  // Validate address range of stack pointers
+  //
+  if (!IsLinearAddressRangeValid (Cr0, Cr3, Cr4, RspAddressStart,
+                                  RspAddressEnd)) {
+    InternalPrintMessage ("%a: attempted to dereference an invalid stack "
+                          "pointer at 0x%016lx - 0x%016lx\n", __FUNCTION__,
+                          RspAddressStart, RspAddressEnd);
+    return;
+  }
+
+  //
   // Dump out stack contents
   //
   InternalPrintMessage ("\nStack dump:\n");
   while (UnwoundStacksCount-- > 0) {
-    //
-    // Check for a valid stack pointer address
-    //
-    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)CurrentRsp) ||
-        !IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)CurrentRsp + 8)) {
-      InternalPrintMessage ("%a: attempted to dereference an invalid stack "
-                            "pointer at 0x%016lx\n", __FUNCTION__, CurrentRsp);
-      break;
-    }
-
     InternalPrintMessage (
       "0x%016lx: %016lx %016lx\n",
       CurrentRsp,
@@ -459,7 +469,7 @@ DumpStackContents (
       );
 
     //
-    // Point to next stack
+    // Point to next stack pointer
     //
     CurrentRsp += CPU_STACK_ALIGNMENT;
   }
@@ -571,8 +581,8 @@ DumpImageModuleNames (
     //
     // Check for a valid frame pointer
     //
-    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp + 8) ||
-        !IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp)) {
+    if (!IsLinearAddressRangeValid (Cr0, Cr3, Cr4, (UINTN)Rbp,
+                                    (UINTN)Rbp + 8)) {
       InternalPrintMessage ("%a: attempted to dereference an invalid frame "
                             "pointer at 0x%016lx\n", __FUNCTION__, Rbp);
       break;
@@ -722,8 +732,8 @@ DumpStacktrace (
     //
     // Check for valid frame pointer
     //
-    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp + 8) ||
-        !IsLinearAddressValid (Cr0, Cr3, Cr4, (UINTN)Rbp)) {
+    if (!IsLinearAddressRangeValid (Cr0, Cr3, Cr4, (UINTN)Rbp,
+                                    (UINTN)Rbp + 8)) {
       InternalPrintMessage ("%a: attempted to dereference an invalid frame "
                             "pointer at 0x%016lx\n", __FUNCTION__, Rbp);
       break;

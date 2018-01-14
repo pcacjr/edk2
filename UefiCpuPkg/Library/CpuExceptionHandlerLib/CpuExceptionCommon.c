@@ -589,3 +589,43 @@ IsLinearAddressValid (
 
   return AddressValid;
 }
+
+/**
+  Check if a linear address range is valid.
+
+  @param[in]  Cr0                 CR0 control register.
+  @param[in]  Cr3                 CR3 control register.
+  @param[in]  Cr4                 CR4 control register.
+  @param[in]  LinearAddressStart  Linear address start.
+  @param[in]  LinearAddressEnd    Linear address end.
+**/
+BOOLEAN
+IsLinearAddressRangeValid (
+  IN  UINTN              Cr0,
+  IN  UINTN              Cr3,
+  IN  UINTN              Cr4,
+  IN  UINTN              LinearAddressStart,
+  IN  UINTN              LinearAddressEnd
+  )
+{
+  //
+  // Check for valid input parameters
+  //
+  if (LinearAddressStart == 0 || LinearAddressEnd == 0 ||
+      LinearAddressStart > LinearAddressEnd) {
+    return FALSE;
+  }
+
+  //
+  // Validate all linear addresses within the given range
+  //
+  for (LinearAddressStart &= ~(SIZE_4KB - 1);
+       LinearAddressStart <= LinearAddressEnd;
+       LinearAddressStart += SIZE_4KB) {
+    if (!IsLinearAddressValid (Cr0, Cr3, Cr4, LinearAddressStart)) {
+      return FALSE;
+    }
+  }
+
+  return TRUE;
+}
