@@ -806,6 +806,13 @@ DumpStackContents (
   UINT32 CurrentEsp;
 
   //
+  // Do nothing in case there wasn't any unwound stack.
+  //
+  if (UnwoundStacksCount == 0) {
+    return;
+  }
+
+  //
   // Get current stack pointer
   //
   CurrentEsp = SystemContext.SystemContextIa32->Esp;

@@ -419,6 +419,13 @@ DumpStackContents (
   UINTN   RspAddressEnd;
 
   //
+  // Do nothing in case there wasn't any unwound stack.
+  //
+  if (UnwoundStacksCount == 0) {
+    return;
+  }
+
+  //
   // Get current stack pointer
   //
   CurrentRsp = SystemContext.SystemContextX64->Rsp;
